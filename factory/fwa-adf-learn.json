@@ -1,0 +1,15 @@
+{
+	"name": "fwa-adf-learn",
+	"properties": {
+		"trustModeClaimForMi": {
+			"value": "Disabled",
+			"editable": true
+		}
+	},
+	"location": "eastus",
+	"identity": {
+		"type": "SystemAssigned",
+		"principalId": "e15cc14d-11ff-48f7-a4a7-c699fdb60cc2",
+		"tenantId": "8e1b1c69-9fa0-4ada-89ab-2735ef701c3c"
+	}
+}
