@@ -1,41 +1,41 @@
 {
-  "name": "DS_Plexis_Binary_File",
-  "properties": {
-    "linkedServiceName": {
-      "referenceName": "LS_Plexis_Blob",
-      "type": "LinkedServiceReference"
-    },
-    "parameters": {
-      "ContainerName": {
-        "type": "string"
-      },
-      "FolderPath": {
-        "type": "string"
-      },
-      "FileName": {
-        "type": "string"
-      }
-    },
-    "annotations": [
-      "plexis"
-    ],
-    "type": "Binary",
-    "typeProperties": {
-      "location": {
-        "type": "AzureBlobStorageLocation",
-        "fileName": {
-          "value": "@dataset().FileName",
-          "type": "Expression"
-        },
-        "folderPath": {
-          "value": "@dataset().FolderPath",
-          "type": "Expression"
-        },
-        "container": {
-          "value": "@dataset().ContainerName",
-          "type": "Expression"
-        }
-      }
-    }
-  }
+	"name": "DS_Plexis_Binary_File",
+	"properties": {
+		"linkedServiceName": {
+			"referenceName": "BlobStorageLinkedService",
+			"type": "LinkedServiceReference"
+		},
+		"parameters": {
+			"ContainerName": {
+				"type": "string"
+			},
+			"FolderPath": {
+				"type": "string"
+			},
+			"FileName": {
+				"type": "string"
+			}
+		},
+		"annotations": [
+			"plexis"
+		],
+		"type": "Binary",
+		"typeProperties": {
+			"location": {
+				"type": "AzureBlobStorageLocation",
+				"fileName": {
+					"value": "@dataset().FileName",
+					"type": "Expression"
+				},
+				"folderPath": {
+					"value": "@dataset().FolderPath",
+					"type": "Expression"
+				},
+				"container": {
+					"value": "@dataset().ContainerName",
+					"type": "Expression"
+				}
+			}
+		}
+	}
 }
