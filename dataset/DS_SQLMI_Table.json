@@ -1,33 +1,33 @@
 {
-  "name": "DS_SQLMI_Table",
-  "properties": {
-    "description": "Generic table reference. Lookup activities use it purely as a connection carrier; the stored procedure supplies the shape.",
-    "linkedServiceName": {
-      "referenceName": "LS_Azure_SQL_MI",
-      "type": "LinkedServiceReference"
-    },
-    "parameters": {
-      "SchemaName": {
-        "type": "string"
-      },
-      "TableName": {
-        "type": "string"
-      }
-    },
-    "annotations": [
-      "plexis"
-    ],
-    "type": "AzureSqlMITable",
-    "typeProperties": {
-      "schema": {
-        "value": "@dataset().SchemaName",
-        "type": "Expression"
-      },
-      "table": {
-        "value": "@dataset().TableName",
-        "type": "Expression"
-      }
-    },
-    "schema": []
-  }
+	"name": "DS_SQLMI_Table",
+	"properties": {
+		"description": "Generic table reference. Lookup activities use it purely as a connection carrier; the stored procedure supplies the shape.",
+		"linkedServiceName": {
+			"referenceName": "AzureSqlDatabaseLinkedService",
+			"type": "LinkedServiceReference"
+		},
+		"parameters": {
+			"SchemaName": {
+				"type": "string"
+			},
+			"TableName": {
+				"type": "string"
+			}
+		},
+		"annotations": [
+			"plexis"
+		],
+		"type": "AzureSqlTable",
+		"schema": [],
+		"typeProperties": {
+			"schema": {
+				"value": "@dataset().SchemaName",
+				"type": "Expression"
+			},
+			"table": {
+				"value": "@dataset().TableName",
+				"type": "Expression"
+			}
+		}
+	}
 }
