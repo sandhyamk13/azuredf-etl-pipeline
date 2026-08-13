@@ -1,3600 +1,3614 @@
 {
-  "name": "PL_Load_Plexis_Claims",
-  "properties": {
-    "description": "Claims flat file -> stg.Plexis_Claim -> dbo.Claim_Header + dbo.Claim_Line. Self-contained and re-runnable for one Batch_Id.",
-    "activities": [
-      {
-        "name": "GM_ClaimsFile",
-        "type": "GetMetadata",
-        "dependsOn": [],
-        "policy": {
-          "timeout": "0.02:00:00",
-          "retry": 2,
-          "retryIntervalInSeconds": 60,
-          "secureOutput": false,
-          "secureInput": false
-        },
-        "userProperties": [
-          {
-            "name": "why",
-            "value": "contentMD5 fingerprints the file so the same export arriving twice under a new name is detectable. columnCount catches a schema change before a single row is copied."
-          }
-        ],
-        "typeProperties": {
-          "dataset": {
-            "referenceName": "DS_Plexis_Delimited_File",
-            "parameters": {
-              "ContainerName": {
-                "value": "@pipeline().parameters.ContainerName",
-                "type": "Expression"
-              },
-              "FolderPath": {
-                "value": "@pipeline().parameters.BatchFolder",
-                "type": "Expression"
-              },
-              "FileName": {
-                "value": "@pipeline().parameters.ClaimsFileName",
-                "type": "Expression"
-              },
-              "Delimiter": "|",
-              "FirstRowAsHeader": true
-            }
-          },
-          "fieldList": [
-            "exists",
-            "size",
-            "lastModified",
-            "contentMD5",
-            "columnCount",
-            "itemName"
-          ],
-          "storeSettings": {
-            "type": "AzureBlobStorageReadSettings",
-            "enablePartitionDiscovery": false
-          },
-          "formatSettings": {
-            "type": "DelimitedTextReadSettings"
-          }
-        }
-      },
-      {
-        "name": "IF_FileValid",
-        "type": "IfCondition",
-        "dependsOn": [
-          {
-            "activity": "GM_ClaimsFile",
-            "dependencyConditions": [
-              "Succeeded"
-            ]
-          }
-        ],
-        "typeProperties": {
-          "expression": {
-            "value": "@and(and(activity('GM_ClaimsFile').output.exists, greater(activity('GM_ClaimsFile').output.size, 0)), equals(activity('GM_ClaimsFile').output.columnCount, pipeline().parameters.ExpectedColumnCount))",
-            "type": "Expression"
-          },
-          "ifFalseActivities": [
-            {
-              "name": "FAIL_FileContract",
-              "type": "Fail",
-              "dependsOn": [],
-              "typeProperties": {
-                "message": {
-                  "value": "@concat('Claims file contract violation. exists=', string(activity('GM_ClaimsFile').output.exists), ' size=', string(activity('GM_ClaimsFile').output.size), ' columns=', string(activity('GM_ClaimsFile').output.columnCount), ' expected=', string(pipeline().parameters.ExpectedColumnCount))",
-                  "type": "Expression"
-                },
-                "errorCode": "PLX_FILE_CONTRACT"
-              }
-            }
-          ]
-        }
-      },
-      {
-        "name": "LKP_RegisterFile",
-        "type": "Lookup",
-        "dependsOn": [
-          {
-            "activity": "IF_FileValid",
-            "dependencyConditions": [
-              "Succeeded"
-            ]
-          }
-        ],
-        "policy": {
-          "timeout": "0.02:00:00",
-          "retry": 2,
-          "retryIntervalInSeconds": 60,
-          "secureOutput": false,
-          "secureInput": false
-        },
-        "typeProperties": {
-          "source": {
-            "type": "AzureSqlSource",
-            "queryTimeout": "00:05:00",
-            "sqlReaderStoredProcedureName": "[etl].[sp_Register_File]",
-            "storedProcedureParameters": {
-              "BatchId": {
-                "value": {
-                  "value": "@pipeline().parameters.BatchId",
-                  "type": "Expression"
-                },
-                "type": "Int64"
-              },
-              "FileType": {
-                "value": "CLAIMS",
-                "type": "String"
-              },
-              "FileName": {
-                "value": {
-                  "value": "@pipeline().parameters.ClaimsFileName",
-                  "type": "Expression"
-                },
-                "type": "String"
-              },
-              "FilePath": {
-                "value": {
-                  "value": "@pipeline().parameters.BatchFolder",
-                  "type": "Expression"
-                },
-                "type": "String"
-              },
-              "FileSize": {
-                "value": {
-                  "value": "@activity('GM_ClaimsFile').output.size",
-                  "type": "Expression"
-                },
-                "type": "Int64"
-              },
-              "ContentMD5": {
-                "value": {
-                  "value": "@activity('GM_ClaimsFile').output.contentMD5",
-                  "type": "Expression"
-                },
-                "type": "String"
-              },
-              "LastModified": {
-                "value": {
-                  "value": "@activity('GM_ClaimsFile').output.lastModified",
-                  "type": "Expression"
-                },
-                "type": "DateTime"
-              },
-              "PipelineRunId": {
-                "value": {
-                  "value": "@pipeline().RunId",
-                  "type": "Expression"
-                },
-                "type": "Guid"
-              }
-            }
-          },
-          "dataset": {
-            "referenceName": "DS_SQLMI_Table",
-            "parameters": {
-              "SchemaName": "etl",
-              "TableName": "File_Load"
-            }
-          },
-          "firstRowOnly": true
-        }
-      },
-      {
-        "name": "SV_FileLoadId",
-        "type": "SetVariable",
-        "dependsOn": [
-          {
-            "activity": "LKP_RegisterFile",
-            "dependencyConditions": [
-              "Succeeded"
-            ]
-          }
-        ],
-        "typeProperties": {
-          "variableName": "vFileLoadId",
-          "value": {
-            "value": "@string(activity('LKP_RegisterFile').output.firstRow.FileLoadId)",
-            "type": "Expression"
-          }
-        }
-      },
-      {
-        "name": "CP_Claims_To_Staging",
-        "type": "Copy",
-        "dependsOn": [
-          {
-            "activity": "SV_FileLoadId",
-            "dependencyConditions": [
-              "Succeeded"
-            ]
-          }
-        ],
-        "policy": {
-          "timeout": "0.04:00:00",
-          "retry": 2,
-          "retryIntervalInSeconds": 120,
-          "secureOutput": false,
-          "secureInput": false
-        },
-        "userProperties": [
-          {
-            "name": "why",
-            "value": "preCopyScript scoped to Batch_Id makes the retry idempotent. Every column lands as text, so one bad value cannot fail the file."
-          }
-        ],
-        "typeProperties": {
-          "source": {
-            "type": "DelimitedTextSource",
-            "storeSettings": {
-              "type": "AzureBlobStorageReadSettings",
-              "recursive": false,
-              "enablePartitionDiscovery": false
-            },
-            "formatSettings": {
-              "type": "DelimitedTextReadSettings"
-            },
-            "additionalColumns": [
-              {
-                "name": "Batch_Id",
-                "value": {
-                  "value": "@string(pipeline().parameters.BatchId)",
-                  "type": "Expression"
-                }
-              },
-              {
-                "name": "File_Load_Id",
-                "value": {
-                  "value": "@variables('vFileLoadId')",
-                  "type": "Expression"
-                }
-              },
-              {
-                "name": "Source_File_Name",
-                "value": "$$FILEPATH"
-              },
-              {
-                "name": "ADF_Pipeline_Run_Id",
-                "value": {
-                  "value": "@pipeline().RunId",
-                  "type": "Expression"
-                }
-              }
-            ]
-          },
-          "sink": {
-            "type": "AzureSqlSink",
-            "writeBehavior": "insert",
-            "tableOption": "none",
-            "writeBatchSize": 10000,
-            "writeBatchTimeout": "00:30:00",
-            "preCopyScript": {
-              "value": "@concat('EXEC etl.sp_Clear_Staging @BatchId = ', string(pipeline().parameters.BatchId), ', @FileType = ''CLAIMS'';')",
-              "type": "Expression"
-            },
-            "disableMetricsCollection": false
-          },
-          "enableStaging": false,
-          "enableSkipIncompatibleRow": true,
-          "logSettings": {
-            "enableCopyActivityLog": true,
-            "copyActivityLogSettings": {
-              "logLevel": "Warning",
-              "enableReliableLogging": false
-            },
-            "logLocationSettings": {
-              "linkedServiceName": {
-                "referenceName": "LS_Plexis_Blob",
-                "type": "LinkedServiceReference"
-              },
-              "path": {
-                "value": "@concat('plexis/logs/copy/', formatDateTime(utcNow(),'yyyy/MM/dd'), '/batch-', string(pipeline().parameters.BatchId))",
-                "type": "Expression"
-              }
-            }
-          },
-          "parallelCopies": 1,
-          "translator": {
-            "type": "TabularTranslator",
-            "mappings": [
-              {
-                "source": {
-                  "name": "ClaimID",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ClaimID",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ClaimTCN",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ClaimTCN",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ClaimType",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ClaimType",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ClaimStatus",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ClaimStatus",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ClaimDate",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ClaimDate",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ReceivedDate",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ReceivedDate",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ProcessedDate",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ProcessedDate",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "AdmissionDate",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "AdmissionDate",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "DischargeDate",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "DischargeDate",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "MemberID",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "MemberID",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "MemberNumber",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "MemberNumber",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "MemberGender",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "MemberGender",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "MemberDOB",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "MemberDOB",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "MemberAge",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "MemberAge",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "MemberAgeBucket",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "MemberAgeBucket",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "MemberAddress",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "MemberAddress",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "MemberCounty",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "MemberCounty",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "MemberState",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "MemberState",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "MemberZIP",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "MemberZIP",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "MemberPlanID",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "MemberPlanID",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "MemberEligibilityStart",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "MemberEligibilityStart",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "MemberEligibilityEnd",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "MemberEligibilityEnd",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "MemberDeathDate",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "MemberDeathDate",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "BillingProviderID",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "BillingProviderID",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "BillingProviderNPI",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "BillingProviderNPI",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "BillingProviderTIN",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "BillingProviderTIN",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "BillingProviderLicenseNumber",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "BillingProviderLicenseNumber",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "BillingProviderProviderName",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "BillingProviderProviderName",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "BillingProviderProviderType",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "BillingProviderProviderType",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "BillingProviderSpecialty",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "BillingProviderSpecialty",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "BillingProviderTaxonomyCode",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "BillingProviderTaxonomyCode",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "BillingProviderAddress",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "BillingProviderAddress",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "BillingProviderCounty",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "BillingProviderCounty",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "BillingProviderState",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "BillingProviderState",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "BillingProviderZIP",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "BillingProviderZIP",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "DRG",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "DRG",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "Diagnosis",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "Diagnosis",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "Category",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "Category",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "Condition",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "Condition",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "TotalBilledAmount",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "TotalBilledAmount",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "TotalAllowedAmount",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "TotalAllowedAmount",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "TotalPaidAmount",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "TotalPaidAmount",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "AdjustmentAmount",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "AdjustmentAmount",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "CopayAmount",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "CopayAmount",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "CoinsuranceAmount",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "CoinsuranceAmount",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "DeductibleAmount",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "DeductibleAmount",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "OriginalClaimID",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "OriginalClaimID",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "BillingType",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "BillingType",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "PricingType",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "PricingType",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ClaimUpcodingFlag",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ClaimUpcodingFlag",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ClaimUnbundlingFlag",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ClaimUnbundlingFlag",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ClaimOverutilizationFlag",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ClaimOverutilizationFlag",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ClaimMedicallyUnnecessaryFlag",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ClaimMedicallyUnnecessaryFlag",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ClaimPTPFlag",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ClaimPTPFlag",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ClaimDuplicateFlag",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ClaimDuplicateFlag",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ClaimOverBillingFlag",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ClaimOverBillingFlag",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ClaimSeverity",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ClaimSeverity",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "Diagnosis_MDM_Category",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "Diagnosis_MDM_Category",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "Risk_Score_High_Level_Cheomo_Code",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "Risk_Score_High_Level_Cheomo_Code",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "FlaggingScenario",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "FlaggingScenario",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "DenialReason",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "DenialReason",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "IsFlagged",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "IsFlagged",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "MemberFirstName",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "MemberFirstName",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "MemberLastName",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "MemberLastName",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "MemberStatus",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "MemberStatus",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "PriorAuthorizationNumber",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "PriorAuthorizationNumber",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ReferringProviderKey",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ReferringProviderKey",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "CreditTargetTCN",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "CreditTargetTCN",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "CreditSourceTCN",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "CreditSourceTCN",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ReprocessedTCN",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ReprocessedTCN",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ReprocessedAdjustmentTCN",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ReprocessedAdjustmentTCN",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "PayerControlNumber",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "PayerControlNumber",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "EncounterClaimNumber",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "EncounterClaimNumber",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "AdjustmentIndicator",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "AdjustmentIndicator",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "VoidIndicator",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "VoidIndicator",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "LatestClaimIndicator",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "LatestClaimIndicator",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "MedicareCrossoverIndicator",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "MedicareCrossoverIndicator",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ProviderSignatureIndicator",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ProviderSignatureIndicator",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ThirdPartyLiabilityAmount",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ThirdPartyLiabilityAmount",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ReimbursementAmount",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ReimbursementAmount",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "PatientResponsibilityAmount",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "PatientResponsibilityAmount",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "APRDRGAmount",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "APRDRGAmount",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ContractAmount",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ContractAmount",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "DiagnosisCode1",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "DiagnosisCode1",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "DiagnosisCode2",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "DiagnosisCode2",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "DiagnosisCode3",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "DiagnosisCode3",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "DiagnosisCode4",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "DiagnosisCode4",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "DiagnosisCode5",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "DiagnosisCode5",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "DiagnosisCode6",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "DiagnosisCode6",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "DiagnosisCode7",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "DiagnosisCode7",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "DiagnosisCode8",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "DiagnosisCode8",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "DiagnosisCode9",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "DiagnosisCode9",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "DiagnosisCode10",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "DiagnosisCode10",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "DiagnosisCode11",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "DiagnosisCode11",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "DiagnosisCode12",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "DiagnosisCode12",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "DiagnosisCode13",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "DiagnosisCode13",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "DiagnosisCode14",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "DiagnosisCode14",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "DiagnosisCode15",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "DiagnosisCode15",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "DiagnosisCode16",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "DiagnosisCode16",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "DiagnosisCode17",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "DiagnosisCode17",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "DiagnosisCode18",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "DiagnosisCode18",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "DiagnosisCode19",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "DiagnosisCode19",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "DiagnosisCode20",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "DiagnosisCode20",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "DiagnosisCode21",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "DiagnosisCode21",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "DiagnosisCode22",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "DiagnosisCode22",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "DiagnosisCode23",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "DiagnosisCode23",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "DiagnosisCode24",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "DiagnosisCode24",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "DiagnosisCode25",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "DiagnosisCode25",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "POAIndicator1",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "POAIndicator1",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "POAIndicator2",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "POAIndicator2",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "POAIndicator3",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "POAIndicator3",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "POAIndicator4",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "POAIndicator4",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "POAIndicator5",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "POAIndicator5",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "POAIndicator6",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "POAIndicator6",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "POAIndicator7",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "POAIndicator7",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "POAIndicator8",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "POAIndicator8",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "POAIndicator9",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "POAIndicator9",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "POAIndicator10",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "POAIndicator10",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "POAIndicator11",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "POAIndicator11",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "POAIndicator12",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "POAIndicator12",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "POAIndicator13",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "POAIndicator13",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "POAIndicator14",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "POAIndicator14",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "POAIndicator15",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "POAIndicator15",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "POAIndicator16",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "POAIndicator16",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "POAIndicator17",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "POAIndicator17",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "POAIndicator18",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "POAIndicator18",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "POAIndicator19",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "POAIndicator19",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "POAIndicator20",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "POAIndicator20",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "POAIndicator21",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "POAIndicator21",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "POAIndicator22",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "POAIndicator22",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "POAIndicator23",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "POAIndicator23",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "POAIndicator24",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "POAIndicator24",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "POAIndicator25",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "POAIndicator25",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "DateOfReceipt",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "DateOfReceipt",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "PaidDate",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "PaidDate",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "IllnessOnsetDate",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "IllnessOnsetDate",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ClaimFrequency",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ClaimFrequency",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "AdmissionType",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "AdmissionType",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "PatientStatus",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "PatientStatus",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "PricingMethod",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "PricingMethod",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ProviderAssignment",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ProviderAssignment",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "BenefitAssignment",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "BenefitAssignment",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ClaimLineID",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ClaimLineID",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ClaimLine_ClaimID",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ClaimLine_ClaimID",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "LineTCN",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "LineTCN",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "LineNumber",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "LineNumber",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ServicingProviderID",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ServicingProviderID",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ServicingProviderNPI",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ServicingProviderNPI",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ServicingProviderTIN",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ServicingProviderTIN",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ServicingProviderLicenseNumber",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ServicingProviderLicenseNumber",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ServicingProviderProviderName",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ServicingProviderProviderName",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ServicingProviderProviderType",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ServicingProviderProviderType",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ServicingProviderSpecialty",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ServicingProviderSpecialty",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ServicingProviderTaxonomyCode",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ServicingProviderTaxonomyCode",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ServicingProviderAddress",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ServicingProviderAddress",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ServicingProviderCounty",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ServicingProviderCounty",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ServicingProviderState",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ServicingProviderState",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ServicingProviderZIP",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ServicingProviderZIP",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ServiceStartDate",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ServiceStartDate",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ServiceEndDate",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ServiceEndDate",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "PlaceOfServiceCode",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "PlaceOfServiceCode",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "TypeOfService",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "TypeOfService",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ServiceType",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ServiceType",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "Procedure",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "Procedure",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "Modifier1",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "Modifier1",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "Modifier2",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "Modifier2",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "Modifier3",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "Modifier3",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "Modifier4",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "Modifier4",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "LineBilledUnits",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "LineBilledUnits",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "LineBilledAmount",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "LineBilledAmount",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "LineAllowedAmount",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "LineAllowedAmount",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "LinePaidAmount",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "LinePaidAmount",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ChargePerUnit",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ChargePerUnit",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "DenialReasonCode",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "DenialReasonCode",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "AdjustmentReasonCode",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "AdjustmentReasonCode",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "LineCopayAmount",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "LineCopayAmount",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "LineCoinsuranceAmount",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "LineCoinsuranceAmount",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "LineDeductibleAmount",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "LineDeductibleAmount",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ClaimLineStatus",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ClaimLineStatus",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "LineBillingType",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "LineBillingType",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "LinePricingType",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "LinePricingType",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "UpcodingFlag",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "UpcodingFlag",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "UnbundlingFlag",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "UnbundlingFlag",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "OverutilizationFlag",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "OverutilizationFlag",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "MedicallyUnnecessaryFlag",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "MedicallyUnnecessaryFlag",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "PTPFlag",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "PTPFlag",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "DuplicateFlag",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "DuplicateFlag",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "OverBillingFlag",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "OverBillingFlag",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "LineSeverity",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "LineSeverity",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "Primary_Component",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "Primary_Component",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "Mutual_CPT_HCPCS",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "Mutual_CPT_HCPCS",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "Pay_or_Deny",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "Pay_or_Deny",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "Reason",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "Reason",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "Billed_MDM_Category",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "Billed_MDM_Category",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "Recommended_Code",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "Recommended_Code",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "Month",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "Month",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "Week",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "Week",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ReviewStatus",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ReviewStatus",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "LineBilledAmountRange",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "LineBilledAmountRange",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "UnitOfMeasure",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "UnitOfMeasure",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "PurchasingProviderKey",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "PurchasingProviderKey",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "SupervisingProviderKey",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "SupervisingProviderKey",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "OrderingProviderKey",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "OrderingProviderKey",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "EmergencyIndicator",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "EmergencyIndicator",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "RevenueCode",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "RevenueCode",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "LineThirdPartyLiabilityAmount",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "LineThirdPartyLiabilityAmount",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "LinePatientResponsibilityAmount",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "LinePatientResponsibilityAmount",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "LevelOfCare",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "LevelOfCare",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "RepricingAllowedAmount",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "RepricingAllowedAmount",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "RepricingFeeRateAmount",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "RepricingFeeRateAmount",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "MedicareAllowedAmount",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "MedicareAllowedAmount",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "MedicarePaidAmount",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "MedicarePaidAmount",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "RelatedCauseCode1",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "RelatedCauseCode1",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "RelatedCauseCode2",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "RelatedCauseCode2",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "OccurrenceCode1",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "OccurrenceCode1",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "OccurrenceCode2",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "OccurrenceCode2",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "OccurrenceCode3",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "OccurrenceCode3",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "OccurrenceCode4",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "OccurrenceCode4",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "OccurrenceCode5",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "OccurrenceCode5",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "OccurrenceCode6",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "OccurrenceCode6",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "OccurrenceCode7",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "OccurrenceCode7",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "OccurrenceCode8",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "OccurrenceCode8",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "OccurrenceCode9",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "OccurrenceCode9",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "OccurrenceCode10",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "OccurrenceCode10",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "OccurrenceCode11",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "OccurrenceCode11",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "OccurrenceCode12",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "OccurrenceCode12",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "OccurrenceDateFrom1",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "OccurrenceDateFrom1",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "OccurrenceDateFrom2",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "OccurrenceDateFrom2",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "OccurrenceDateFrom3",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "OccurrenceDateFrom3",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "OccurrenceDateFrom4",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "OccurrenceDateFrom4",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "OccurrenceDateFrom5",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "OccurrenceDateFrom5",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "OccurrenceDateFrom6",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "OccurrenceDateFrom6",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "OccurrenceDateFrom7",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "OccurrenceDateFrom7",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "OccurrenceDateFrom8",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "OccurrenceDateFrom8",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "OccurrenceDateFrom9",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "OccurrenceDateFrom9",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "OccurrenceDateFrom10",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "OccurrenceDateFrom10",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "OccurrenceDateFrom11",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "OccurrenceDateFrom11",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "OccurrenceDateFrom12",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "OccurrenceDateFrom12",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "OccurrenceDateTo1",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "OccurrenceDateTo1",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "OccurrenceDateTo2",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "OccurrenceDateTo2",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "OccurrenceDateTo3",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "OccurrenceDateTo3",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "OccurrenceDateTo4",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "OccurrenceDateTo4",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "OccurrenceDateTo5",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "OccurrenceDateTo5",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "OccurrenceDateTo6",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "OccurrenceDateTo6",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "OccurrenceDateTo7",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "OccurrenceDateTo7",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "OccurrenceDateTo8",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "OccurrenceDateTo8",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "OccurrenceDateTo9",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "OccurrenceDateTo9",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "OccurrenceDateTo10",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "OccurrenceDateTo10",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "OccurrenceDateTo11",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "OccurrenceDateTo11",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "OccurrenceDateTo12",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "OccurrenceDateTo12",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ProcedureTypeCode1",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ProcedureTypeCode1",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ProcedureTypeCode2",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ProcedureTypeCode2",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ProcedureTypeCode3",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ProcedureTypeCode3",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ProcedureTypeCode4",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ProcedureTypeCode4",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ProcedureTypeCode5",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ProcedureTypeCode5",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ProcedureTypeCode6",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ProcedureTypeCode6",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ProcedureTypeCode7",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ProcedureTypeCode7",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ProcedureTypeCode8",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ProcedureTypeCode8",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ProcedureTypeCode9",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ProcedureTypeCode9",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ProcedureTypeCode10",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ProcedureTypeCode10",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ProcedureTypeCode11",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ProcedureTypeCode11",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ProcedureTypeCode12",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ProcedureTypeCode12",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ProcedureTypeCode13",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ProcedureTypeCode13",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ProcedureTypeCode14",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ProcedureTypeCode14",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ProcedureTypeCode15",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ProcedureTypeCode15",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ProcedureTypeCode16",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ProcedureTypeCode16",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ProcedureTypeCode17",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ProcedureTypeCode17",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ProcedureTypeCode18",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ProcedureTypeCode18",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ProcedureTypeCode19",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ProcedureTypeCode19",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ProcedureTypeCode20",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ProcedureTypeCode20",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ProcedureTypeCode21",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ProcedureTypeCode21",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ProcedureTypeCode22",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ProcedureTypeCode22",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ProcedureTypeCode23",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ProcedureTypeCode23",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ProcedureTypeCode24",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ProcedureTypeCode24",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ProcedureTypeCode25",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ProcedureTypeCode25",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ProcedureDate1",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ProcedureDate1",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ProcedureDate2",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ProcedureDate2",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ProcedureDate3",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ProcedureDate3",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ProcedureDate4",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ProcedureDate4",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ProcedureDate5",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ProcedureDate5",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ProcedureDate6",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ProcedureDate6",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ProcedureDate7",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ProcedureDate7",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ProcedureDate8",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ProcedureDate8",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ProcedureDate9",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ProcedureDate9",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ProcedureDate10",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ProcedureDate10",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ProcedureDate11",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ProcedureDate11",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ProcedureDate12",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ProcedureDate12",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ProcedureDate13",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ProcedureDate13",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ProcedureDate14",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ProcedureDate14",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ProcedureDate15",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ProcedureDate15",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ProcedureDate16",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ProcedureDate16",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ProcedureDate17",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ProcedureDate17",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ProcedureDate18",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ProcedureDate18",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ProcedureDate19",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ProcedureDate19",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ProcedureDate20",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ProcedureDate20",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ProcedureDate21",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ProcedureDate21",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ProcedureDate22",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ProcedureDate22",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ProcedureDate23",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ProcedureDate23",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ProcedureDate24",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ProcedureDate24",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "ProcedureDate25",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "ProcedureDate25",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "NDCCode",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "NDCCode",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "PHARMClass",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "PHARMClass",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "NDCQty",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "NDCQty",
-                  "type": "String"
-                }
-              },
-              {
-                "source": {
-                  "name": "NDCUnits",
-                  "type": "String"
-                },
-                "sink": {
-                  "name": "NDCUnits",
-                  "type": "String"
-                }
-              }
-            ]
-          }
-        },
-        "inputs": [
-          {
-            "referenceName": "DS_Plexis_Delimited_File",
-            "type": "DatasetReference",
-            "parameters": {
-              "ContainerName": {
-                "value": "@pipeline().parameters.ContainerName",
-                "type": "Expression"
-              },
-              "FolderPath": {
-                "value": "@pipeline().parameters.BatchFolder",
-                "type": "Expression"
-              },
-              "FileName": {
-                "value": "@pipeline().parameters.ClaimsFileName",
-                "type": "Expression"
-              },
-              "Delimiter": "|",
-              "FirstRowAsHeader": true
-            }
-          }
-        ],
-        "outputs": [
-          {
-            "referenceName": "DS_SQLMI_Table",
-            "type": "DatasetReference",
-            "parameters": {
-              "SchemaName": "stg",
-              "TableName": "Plexis_Claim"
-            }
-          }
-        ]
-      },
-      {
-        "name": "SP_CompleteFileCopy",
-        "type": "SqlServerStoredProcedure",
-        "dependsOn": [
-          {
-            "activity": "CP_Claims_To_Staging",
-            "dependencyConditions": [
-              "Succeeded"
-            ]
-          }
-        ],
-        "policy": {
-          "timeout": "0.02:00:00",
-          "retry": 2,
-          "retryIntervalInSeconds": 60,
-          "secureOutput": false,
-          "secureInput": false
-        },
-        "typeProperties": {
-          "storedProcedureName": "[etl].[sp_Complete_File]",
-          "storedProcedureParameters": {
-            "FileLoadId": {
-              "value": {
-                "value": "@variables('vFileLoadId')",
-                "type": "Expression"
-              },
-              "type": "Int64"
-            },
-            "RowsRead": {
-              "value": {
-                "value": "@activity('CP_Claims_To_Staging').output.rowsRead",
-                "type": "Expression"
-              },
-              "type": "Int64"
-            },
-            "RowsCopied": {
-              "value": {
-                "value": "@activity('CP_Claims_To_Staging').output.rowsCopied",
-                "type": "Expression"
-              },
-              "type": "Int64"
-            },
-            "RowsSkipped": {
-              "value": {
-                "value": "@activity('CP_Claims_To_Staging').output.rowsSkipped",
-                "type": "Expression"
-              },
-              "type": "Int64"
-            },
-            "Status": {
-              "value": "IN_PROGRESS",
-              "type": "String"
-            }
-          }
-        },
-        "linkedServiceName": {
-          "referenceName": "LS_Azure_SQL_MI",
-          "type": "LinkedServiceReference"
-        }
-      },
-      {
-        "name": "LKP_ProcessClaims",
-        "type": "Lookup",
-        "dependsOn": [
-          {
-            "activity": "SP_CompleteFileCopy",
-            "dependencyConditions": [
-              "Succeeded"
-            ]
-          }
-        ],
-        "policy": {
-          "timeout": "0.02:00:00",
-          "retry": 1,
-          "retryIntervalInSeconds": 60
-        },
-        "userProperties": [
-          {
-            "name": "why",
-            "value": "Set-based transform runs inside SQL MI. Moving 300+ columns through a Data Flow cluster would cost far more for no benefit."
-          }
-        ],
-        "typeProperties": {
-          "source": {
-            "type": "AzureSqlSource",
-            "queryTimeout": "02:00:00",
-            "sqlReaderStoredProcedureName": "[etl].[sp_Process_Plexis_Claim]",
-            "storedProcedureParameters": {
-              "BatchId": {
-                "value": {
-                  "value": "@pipeline().parameters.BatchId",
-                  "type": "Expression"
-                },
-                "type": "Int64"
-              },
-              "FileLoadId": {
-                "value": {
-                  "value": "@variables('vFileLoadId')",
-                  "type": "Expression"
-                },
-                "type": "Int64"
-              },
-              "MaxRejectPct": {
-                "value": {
-                  "value": "@string(pipeline().parameters.MaxRejectPct)",
-                  "type": "Expression"
-                },
-                "type": "Decimal"
-              }
-            }
-          },
-          "dataset": {
-            "referenceName": "DS_SQLMI_Table",
-            "parameters": {
-              "SchemaName": "dbo",
-              "TableName": "Claim_Header"
-            }
-          },
-          "firstRowOnly": true
-        }
-      },
-      {
-        "name": "SP_FailFile",
-        "type": "SqlServerStoredProcedure",
-        "dependsOn": [
-          {
-            "activity": "CP_Claims_To_Staging",
-            "dependencyConditions": [
-              "Failed"
-            ]
-          },
-          {
-            "activity": "LKP_ProcessClaims",
-            "dependencyConditions": [
-              "Failed"
-            ]
-          }
-        ],
-        "policy": {
-          "timeout": "0.00:10:00",
-          "retry": 3,
-          "retryIntervalInSeconds": 30
-        },
-        "typeProperties": {
-          "storedProcedureName": "[etl].[sp_Complete_File]",
-          "storedProcedureParameters": {
-            "FileLoadId": {
-              "value": {
-                "value": "@variables('vFileLoadId')",
-                "type": "Expression"
-              },
-              "type": "Int64"
-            },
-            "Status": {
-              "value": "FAILED",
-              "type": "String"
-            },
-            "ErrorMessage": {
-              "value": {
-                "value": "@concat('Claims load failed. ', string(coalesce(activity('LKP_ProcessClaims').error.message, activity('CP_Claims_To_Staging').error.message)))",
-                "type": "Expression"
-              },
-              "type": "String"
-            }
-          }
-        },
-        "linkedServiceName": {
-          "referenceName": "LS_Azure_SQL_MI",
-          "type": "LinkedServiceReference"
-        }
-      },
-      {
-        "name": "FAIL_ClaimsLoad",
-        "type": "Fail",
-        "dependsOn": [
-          {
-            "activity": "SP_FailFile",
-            "dependencyConditions": [
-              "Succeeded"
-            ]
-          }
-        ],
-        "typeProperties": {
-          "message": {
-            "value": "@concat('Claims load failed for Batch_Id ', string(pipeline().parameters.BatchId), '. See etl.File_Load and etl.Load_Error.')",
-            "type": "Expression"
-          },
-          "errorCode": "PLX_CLAIMS_LOAD_FAILED"
-        }
-      }
-    ],
-    "parameters": {
-      "BatchId": {
-        "type": "int"
-      },
-      "ContainerName": {
-        "type": "string"
-      },
-      "BatchFolder": {
-        "type": "string"
-      },
-      "ClaimsFileName": {
-        "type": "string"
-      },
-      "ExpectedColumnCount": {
-        "type": "int",
-        "defaultValue": 304
-      },
-      "MaxRejectPct": {
-        "type": "string",
-        "defaultValue": "5.00"
-      }
-    },
-    "variables": {
-      "vFileLoadId": {
-        "type": "String"
-      }
-    },
-    "folder": {
-      "name": "Plexis/Children"
-    },
-    "annotations": [
-      "plexis",
-      "claims"
-    ]
-  }
+	"name": "PL_Load_Plexis_Claims",
+	"properties": {
+		"description": "Claims flat file -> stg.Plexis_Claim -> dbo.Claim_Header + dbo.Claim_Line. Self-contained and re-runnable for one Batch_Id.",
+		"activities": [
+			{
+				"name": "GM_ClaimsFile",
+				"type": "GetMetadata",
+				"dependsOn": [],
+				"policy": {
+					"timeout": "0.02:00:00",
+					"retry": 2,
+					"retryIntervalInSeconds": 60,
+					"secureOutput": false,
+					"secureInput": false
+				},
+				"userProperties": [
+					{
+						"name": "why",
+						"value": "contentMD5 fingerprints the file so the same export arriving twice under a new name is detectable. columnCount catches a schema change before a single row is copied."
+					}
+				],
+				"typeProperties": {
+					"dataset": {
+						"referenceName": "DS_Plexis_Delimited_File",
+						"type": "DatasetReference",
+						"parameters": {
+							"ContainerName": {
+								"value": "@pipeline().parameters.ContainerName",
+								"type": "Expression"
+							},
+							"FolderPath": {
+								"value": "@pipeline().parameters.BatchFolder",
+								"type": "Expression"
+							},
+							"FileName": {
+								"value": "@pipeline().parameters.ClaimsFileName",
+								"type": "Expression"
+							},
+							"Delimiter": "|",
+							"FirstRowAsHeader": true
+						}
+					},
+					"fieldList": [
+						"exists",
+						"size",
+						"lastModified",
+						"columnCount",
+						"itemName"
+					],
+					"storeSettings": {
+						"type": "AzureBlobStorageReadSettings",
+						"recursive": true,
+						"enablePartitionDiscovery": false
+					},
+					"formatSettings": {
+						"type": "DelimitedTextReadSettings"
+					}
+				}
+			},
+			{
+				"name": "IF_FileValid",
+				"type": "IfCondition",
+				"dependsOn": [
+					{
+						"activity": "GM_ClaimsFile",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					}
+				],
+				"userProperties": [],
+				"typeProperties": {
+					"expression": {
+						"value": "@and(and(activity('GM_ClaimsFile').output.exists, greater(activity('GM_ClaimsFile').output.size, 0)), equals(activity('GM_ClaimsFile').output.columnCount, pipeline().parameters.ExpectedColumnCount))",
+						"type": "Expression"
+					},
+					"ifFalseActivities": [
+						{
+							"name": "FAIL_FileContract",
+							"type": "Fail",
+							"dependsOn": [],
+							"userProperties": [],
+							"typeProperties": {
+								"message": {
+									"value": "@concat('Claims file contract violation. exists=', string(activity('GM_ClaimsFile').output.exists), ' size=', string(activity('GM_ClaimsFile').output.size), ' columns=', string(activity('GM_ClaimsFile').output.columnCount), ' expected=', string(pipeline().parameters.ExpectedColumnCount))",
+									"type": "Expression"
+								},
+								"errorCode": "PLX_FILE_CONTRACT"
+							}
+						}
+					]
+				}
+			},
+			{
+				"name": "LKP_RegisterFile",
+				"type": "Lookup",
+				"dependsOn": [
+					{
+						"activity": "IF_FileValid",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					}
+				],
+				"policy": {
+					"timeout": "0.02:00:00",
+					"retry": 2,
+					"retryIntervalInSeconds": 60,
+					"secureOutput": false,
+					"secureInput": false
+				},
+				"userProperties": [],
+				"typeProperties": {
+					"source": {
+						"type": "AzureSqlSource",
+						"sqlReaderStoredProcedureName": "[etl].[sp_Register_File]",
+						"storedProcedureParameters": {
+							"BatchId": {
+								"type": "Int64",
+								"value": {
+									"value": "@pipeline().parameters.BatchId",
+									"type": "Expression"
+								}
+							},
+							"FileType": {
+								"type": "String",
+								"value": "CLAIMS"
+							},
+							"FileName": {
+								"type": "String",
+								"value": {
+									"value": "@pipeline().parameters.ClaimsFileName",
+									"type": "Expression"
+								}
+							},
+							"FilePath": {
+								"type": "String",
+								"value": {
+									"value": "@pipeline().parameters.BatchFolder",
+									"type": "Expression"
+								}
+							},
+							"FileSize": {
+								"type": "Int64",
+								"value": {
+									"value": "@activity('GM_ClaimsFile').output.size",
+									"type": "Expression"
+								}
+							},
+							"ContentMD5": {
+								"type": "String",
+								"value": {
+									"value": "@activity('GM_ClaimsFile').output.contentMD5",
+									"type": "Expression"
+								}
+							},
+							"LastModified": {
+								"type": "DateTime",
+								"value": {
+									"value": "@activity('GM_ClaimsFile').output.lastModified",
+									"type": "Expression"
+								}
+							},
+							"PipelineRunId": {
+								"type": "Guid",
+								"value": {
+									"value": "@pipeline().RunId",
+									"type": "Expression"
+								}
+							}
+						},
+						"queryTimeout": "00:05:00",
+						"partitionOption": "None"
+					},
+					"dataset": {
+						"referenceName": "DS_SQLMI_Table",
+						"type": "DatasetReference",
+						"parameters": {
+							"SchemaName": "etl",
+							"TableName": "File_Load"
+						}
+					},
+					"firstRowOnly": true
+				}
+			},
+			{
+				"name": "SV_FileLoadId",
+				"type": "SetVariable",
+				"dependsOn": [
+					{
+						"activity": "LKP_RegisterFile",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					}
+				],
+				"policy": {
+					"secureOutput": false,
+					"secureInput": false
+				},
+				"userProperties": [],
+				"typeProperties": {
+					"variableName": "vFileLoadId",
+					"value": {
+						"value": "@string(activity('LKP_RegisterFile').output.firstRow.FileLoadId)",
+						"type": "Expression"
+					}
+				}
+			},
+			{
+				"name": "CP_Claims_To_Staging",
+				"type": "Copy",
+				"dependsOn": [
+					{
+						"activity": "SV_FileLoadId",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					}
+				],
+				"policy": {
+					"timeout": "0.04:00:00",
+					"retry": 2,
+					"retryIntervalInSeconds": 120,
+					"secureOutput": false,
+					"secureInput": false
+				},
+				"userProperties": [
+					{
+						"name": "why",
+						"value": "preCopyScript scoped to Batch_Id makes the retry idempotent. Every column lands as text, so one bad value cannot fail the file."
+					}
+				],
+				"typeProperties": {
+					"source": {
+						"type": "DelimitedTextSource",
+						"additionalColumns": [
+							{
+								"name": "Batch_Id",
+								"value": {
+									"value": "@string(pipeline().parameters.BatchId)",
+									"type": "Expression"
+								}
+							},
+							{
+								"name": "File_Load_Id",
+								"value": {
+									"value": "@variables('vFileLoadId')",
+									"type": "Expression"
+								}
+							},
+							{
+								"name": "Source_File_Name",
+								"value": "$$FILEPATH"
+							},
+							{
+								"name": "ADF_Pipeline_Run_Id",
+								"value": {
+									"value": "@pipeline().RunId",
+									"type": "Expression"
+								}
+							}
+						],
+						"storeSettings": {
+							"type": "AzureBlobStorageReadSettings",
+							"recursive": false,
+							"enablePartitionDiscovery": false
+						},
+						"formatSettings": {
+							"type": "DelimitedTextReadSettings"
+						}
+					},
+					"sink": {
+						"type": "AzureSqlSink",
+						"writeBehavior": "insert",
+						"sqlWriterUseTableLock": false
+					},
+					"enableStaging": false,
+					"parallelCopies": 1,
+					"enableSkipIncompatibleRow": true,
+					"logSettings": {
+						"enableCopyActivityLog": true,
+						"copyActivityLogSettings": {
+							"logLevel": "Warning",
+							"enableReliableLogging": false
+						},
+						"logLocationSettings": {
+							"linkedServiceName": {
+								"referenceName": "BlobStorageLinkedService",
+								"type": "LinkedServiceReference"
+							},
+							"path": {
+								"value": "@concat('plexis/logs/copy/', formatDateTime(utcNow(),'yyyy/MM/dd'), '/batch-', string(pipeline().parameters.BatchId))",
+								"type": "Expression"
+							}
+						}
+					},
+					"translator": {
+						"type": "TabularTranslator",
+						"mappings": [
+							{
+								"source": {
+									"name": "ClaimID",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ClaimID",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ClaimTCN",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ClaimTCN",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ClaimType",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ClaimType",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ClaimStatus",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ClaimStatus",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ClaimDate",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ClaimDate",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ReceivedDate",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ReceivedDate",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ProcessedDate",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ProcessedDate",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "AdmissionDate",
+									"type": "String"
+								},
+								"sink": {
+									"name": "AdmissionDate",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "DischargeDate",
+									"type": "String"
+								},
+								"sink": {
+									"name": "DischargeDate",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "MemberID",
+									"type": "String"
+								},
+								"sink": {
+									"name": "MemberID",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "MemberNumber",
+									"type": "String"
+								},
+								"sink": {
+									"name": "MemberNumber",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "MemberGender",
+									"type": "String"
+								},
+								"sink": {
+									"name": "MemberGender",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "MemberDOB",
+									"type": "String"
+								},
+								"sink": {
+									"name": "MemberDOB",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "MemberAge",
+									"type": "String"
+								},
+								"sink": {
+									"name": "MemberAge",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "MemberAgeBucket",
+									"type": "String"
+								},
+								"sink": {
+									"name": "MemberAgeBucket",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "MemberAddress",
+									"type": "String"
+								},
+								"sink": {
+									"name": "MemberAddress",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "MemberCounty",
+									"type": "String"
+								},
+								"sink": {
+									"name": "MemberCounty",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "MemberState",
+									"type": "String"
+								},
+								"sink": {
+									"name": "MemberState",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "MemberZIP",
+									"type": "String"
+								},
+								"sink": {
+									"name": "MemberZIP",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "MemberPlanID",
+									"type": "String"
+								},
+								"sink": {
+									"name": "MemberPlanID",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "MemberEligibilityStart",
+									"type": "String"
+								},
+								"sink": {
+									"name": "MemberEligibilityStart",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "MemberEligibilityEnd",
+									"type": "String"
+								},
+								"sink": {
+									"name": "MemberEligibilityEnd",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "MemberDeathDate",
+									"type": "String"
+								},
+								"sink": {
+									"name": "MemberDeathDate",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "BillingProviderID",
+									"type": "String"
+								},
+								"sink": {
+									"name": "BillingProviderID",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "BillingProviderNPI",
+									"type": "String"
+								},
+								"sink": {
+									"name": "BillingProviderNPI",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "BillingProviderTIN",
+									"type": "String"
+								},
+								"sink": {
+									"name": "BillingProviderTIN",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "BillingProviderLicenseNumber",
+									"type": "String"
+								},
+								"sink": {
+									"name": "BillingProviderLicenseNumber",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "BillingProviderProviderName",
+									"type": "String"
+								},
+								"sink": {
+									"name": "BillingProviderProviderName",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "BillingProviderProviderType",
+									"type": "String"
+								},
+								"sink": {
+									"name": "BillingProviderProviderType",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "BillingProviderSpecialty",
+									"type": "String"
+								},
+								"sink": {
+									"name": "BillingProviderSpecialty",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "BillingProviderTaxonomyCode",
+									"type": "String"
+								},
+								"sink": {
+									"name": "BillingProviderTaxonomyCode",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "BillingProviderAddress",
+									"type": "String"
+								},
+								"sink": {
+									"name": "BillingProviderAddress",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "BillingProviderCounty",
+									"type": "String"
+								},
+								"sink": {
+									"name": "BillingProviderCounty",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "BillingProviderState",
+									"type": "String"
+								},
+								"sink": {
+									"name": "BillingProviderState",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "BillingProviderZIP",
+									"type": "String"
+								},
+								"sink": {
+									"name": "BillingProviderZIP",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "DRG",
+									"type": "String"
+								},
+								"sink": {
+									"name": "DRG",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "Diagnosis",
+									"type": "String"
+								},
+								"sink": {
+									"name": "Diagnosis",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "Category",
+									"type": "String"
+								},
+								"sink": {
+									"name": "Category",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "Condition",
+									"type": "String"
+								},
+								"sink": {
+									"name": "Condition",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "TotalBilledAmount",
+									"type": "String"
+								},
+								"sink": {
+									"name": "TotalBilledAmount",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "TotalAllowedAmount",
+									"type": "String"
+								},
+								"sink": {
+									"name": "TotalAllowedAmount",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "TotalPaidAmount",
+									"type": "String"
+								},
+								"sink": {
+									"name": "TotalPaidAmount",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "AdjustmentAmount",
+									"type": "String"
+								},
+								"sink": {
+									"name": "AdjustmentAmount",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "CopayAmount",
+									"type": "String"
+								},
+								"sink": {
+									"name": "CopayAmount",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "CoinsuranceAmount",
+									"type": "String"
+								},
+								"sink": {
+									"name": "CoinsuranceAmount",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "DeductibleAmount",
+									"type": "String"
+								},
+								"sink": {
+									"name": "DeductibleAmount",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "OriginalClaimID",
+									"type": "String"
+								},
+								"sink": {
+									"name": "OriginalClaimID",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "BillingType",
+									"type": "String"
+								},
+								"sink": {
+									"name": "BillingType",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "PricingType",
+									"type": "String"
+								},
+								"sink": {
+									"name": "PricingType",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ClaimUpcodingFlag",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ClaimUpcodingFlag",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ClaimUnbundlingFlag",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ClaimUnbundlingFlag",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ClaimOverutilizationFlag",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ClaimOverutilizationFlag",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ClaimMedicallyUnnecessaryFlag",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ClaimMedicallyUnnecessaryFlag",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ClaimPTPFlag",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ClaimPTPFlag",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ClaimDuplicateFlag",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ClaimDuplicateFlag",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ClaimOverBillingFlag",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ClaimOverBillingFlag",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ClaimSeverity",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ClaimSeverity",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "Diagnosis_MDM_Category",
+									"type": "String"
+								},
+								"sink": {
+									"name": "Diagnosis_MDM_Category",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "Risk_Score_High_Level_Cheomo_Code",
+									"type": "String"
+								},
+								"sink": {
+									"name": "Risk_Score_High_Level_Cheomo_Code",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "FlaggingScenario",
+									"type": "String"
+								},
+								"sink": {
+									"name": "FlaggingScenario",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "DenialReason",
+									"type": "String"
+								},
+								"sink": {
+									"name": "DenialReason",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "IsFlagged",
+									"type": "String"
+								},
+								"sink": {
+									"name": "IsFlagged",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "MemberFirstName",
+									"type": "String"
+								},
+								"sink": {
+									"name": "MemberFirstName",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "MemberLastName",
+									"type": "String"
+								},
+								"sink": {
+									"name": "MemberLastName",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "MemberStatus",
+									"type": "String"
+								},
+								"sink": {
+									"name": "MemberStatus",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "PriorAuthorizationNumber",
+									"type": "String"
+								},
+								"sink": {
+									"name": "PriorAuthorizationNumber",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ReferringProviderKey",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ReferringProviderKey",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "CreditTargetTCN",
+									"type": "String"
+								},
+								"sink": {
+									"name": "CreditTargetTCN",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "CreditSourceTCN",
+									"type": "String"
+								},
+								"sink": {
+									"name": "CreditSourceTCN",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ReprocessedTCN",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ReprocessedTCN",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ReprocessedAdjustmentTCN",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ReprocessedAdjustmentTCN",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "PayerControlNumber",
+									"type": "String"
+								},
+								"sink": {
+									"name": "PayerControlNumber",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "EncounterClaimNumber",
+									"type": "String"
+								},
+								"sink": {
+									"name": "EncounterClaimNumber",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "AdjustmentIndicator",
+									"type": "String"
+								},
+								"sink": {
+									"name": "AdjustmentIndicator",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "VoidIndicator",
+									"type": "String"
+								},
+								"sink": {
+									"name": "VoidIndicator",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "LatestClaimIndicator",
+									"type": "String"
+								},
+								"sink": {
+									"name": "LatestClaimIndicator",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "MedicareCrossoverIndicator",
+									"type": "String"
+								},
+								"sink": {
+									"name": "MedicareCrossoverIndicator",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ProviderSignatureIndicator",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ProviderSignatureIndicator",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ThirdPartyLiabilityAmount",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ThirdPartyLiabilityAmount",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ReimbursementAmount",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ReimbursementAmount",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "PatientResponsibilityAmount",
+									"type": "String"
+								},
+								"sink": {
+									"name": "PatientResponsibilityAmount",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "APRDRGAmount",
+									"type": "String"
+								},
+								"sink": {
+									"name": "APRDRGAmount",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ContractAmount",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ContractAmount",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "DiagnosisCode1",
+									"type": "String"
+								},
+								"sink": {
+									"name": "DiagnosisCode1",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "DiagnosisCode2",
+									"type": "String"
+								},
+								"sink": {
+									"name": "DiagnosisCode2",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "DiagnosisCode3",
+									"type": "String"
+								},
+								"sink": {
+									"name": "DiagnosisCode3",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "DiagnosisCode4",
+									"type": "String"
+								},
+								"sink": {
+									"name": "DiagnosisCode4",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "DiagnosisCode5",
+									"type": "String"
+								},
+								"sink": {
+									"name": "DiagnosisCode5",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "DiagnosisCode6",
+									"type": "String"
+								},
+								"sink": {
+									"name": "DiagnosisCode6",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "DiagnosisCode7",
+									"type": "String"
+								},
+								"sink": {
+									"name": "DiagnosisCode7",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "DiagnosisCode8",
+									"type": "String"
+								},
+								"sink": {
+									"name": "DiagnosisCode8",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "DiagnosisCode9",
+									"type": "String"
+								},
+								"sink": {
+									"name": "DiagnosisCode9",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "DiagnosisCode10",
+									"type": "String"
+								},
+								"sink": {
+									"name": "DiagnosisCode10",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "DiagnosisCode11",
+									"type": "String"
+								},
+								"sink": {
+									"name": "DiagnosisCode11",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "DiagnosisCode12",
+									"type": "String"
+								},
+								"sink": {
+									"name": "DiagnosisCode12",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "DiagnosisCode13",
+									"type": "String"
+								},
+								"sink": {
+									"name": "DiagnosisCode13",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "DiagnosisCode14",
+									"type": "String"
+								},
+								"sink": {
+									"name": "DiagnosisCode14",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "DiagnosisCode15",
+									"type": "String"
+								},
+								"sink": {
+									"name": "DiagnosisCode15",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "DiagnosisCode16",
+									"type": "String"
+								},
+								"sink": {
+									"name": "DiagnosisCode16",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "DiagnosisCode17",
+									"type": "String"
+								},
+								"sink": {
+									"name": "DiagnosisCode17",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "DiagnosisCode18",
+									"type": "String"
+								},
+								"sink": {
+									"name": "DiagnosisCode18",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "DiagnosisCode19",
+									"type": "String"
+								},
+								"sink": {
+									"name": "DiagnosisCode19",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "DiagnosisCode20",
+									"type": "String"
+								},
+								"sink": {
+									"name": "DiagnosisCode20",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "DiagnosisCode21",
+									"type": "String"
+								},
+								"sink": {
+									"name": "DiagnosisCode21",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "DiagnosisCode22",
+									"type": "String"
+								},
+								"sink": {
+									"name": "DiagnosisCode22",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "DiagnosisCode23",
+									"type": "String"
+								},
+								"sink": {
+									"name": "DiagnosisCode23",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "DiagnosisCode24",
+									"type": "String"
+								},
+								"sink": {
+									"name": "DiagnosisCode24",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "DiagnosisCode25",
+									"type": "String"
+								},
+								"sink": {
+									"name": "DiagnosisCode25",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "POAIndicator1",
+									"type": "String"
+								},
+								"sink": {
+									"name": "POAIndicator1",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "POAIndicator2",
+									"type": "String"
+								},
+								"sink": {
+									"name": "POAIndicator2",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "POAIndicator3",
+									"type": "String"
+								},
+								"sink": {
+									"name": "POAIndicator3",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "POAIndicator4",
+									"type": "String"
+								},
+								"sink": {
+									"name": "POAIndicator4",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "POAIndicator5",
+									"type": "String"
+								},
+								"sink": {
+									"name": "POAIndicator5",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "POAIndicator6",
+									"type": "String"
+								},
+								"sink": {
+									"name": "POAIndicator6",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "POAIndicator7",
+									"type": "String"
+								},
+								"sink": {
+									"name": "POAIndicator7",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "POAIndicator8",
+									"type": "String"
+								},
+								"sink": {
+									"name": "POAIndicator8",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "POAIndicator9",
+									"type": "String"
+								},
+								"sink": {
+									"name": "POAIndicator9",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "POAIndicator10",
+									"type": "String"
+								},
+								"sink": {
+									"name": "POAIndicator10",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "POAIndicator11",
+									"type": "String"
+								},
+								"sink": {
+									"name": "POAIndicator11",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "POAIndicator12",
+									"type": "String"
+								},
+								"sink": {
+									"name": "POAIndicator12",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "POAIndicator13",
+									"type": "String"
+								},
+								"sink": {
+									"name": "POAIndicator13",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "POAIndicator14",
+									"type": "String"
+								},
+								"sink": {
+									"name": "POAIndicator14",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "POAIndicator15",
+									"type": "String"
+								},
+								"sink": {
+									"name": "POAIndicator15",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "POAIndicator16",
+									"type": "String"
+								},
+								"sink": {
+									"name": "POAIndicator16",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "POAIndicator17",
+									"type": "String"
+								},
+								"sink": {
+									"name": "POAIndicator17",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "POAIndicator18",
+									"type": "String"
+								},
+								"sink": {
+									"name": "POAIndicator18",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "POAIndicator19",
+									"type": "String"
+								},
+								"sink": {
+									"name": "POAIndicator19",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "POAIndicator20",
+									"type": "String"
+								},
+								"sink": {
+									"name": "POAIndicator20",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "POAIndicator21",
+									"type": "String"
+								},
+								"sink": {
+									"name": "POAIndicator21",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "POAIndicator22",
+									"type": "String"
+								},
+								"sink": {
+									"name": "POAIndicator22",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "POAIndicator23",
+									"type": "String"
+								},
+								"sink": {
+									"name": "POAIndicator23",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "POAIndicator24",
+									"type": "String"
+								},
+								"sink": {
+									"name": "POAIndicator24",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "POAIndicator25",
+									"type": "String"
+								},
+								"sink": {
+									"name": "POAIndicator25",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "DateOfReceipt",
+									"type": "String"
+								},
+								"sink": {
+									"name": "DateOfReceipt",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "PaidDate",
+									"type": "String"
+								},
+								"sink": {
+									"name": "PaidDate",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "IllnessOnsetDate",
+									"type": "String"
+								},
+								"sink": {
+									"name": "IllnessOnsetDate",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ClaimFrequency",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ClaimFrequency",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "AdmissionType",
+									"type": "String"
+								},
+								"sink": {
+									"name": "AdmissionType",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "PatientStatus",
+									"type": "String"
+								},
+								"sink": {
+									"name": "PatientStatus",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "PricingMethod",
+									"type": "String"
+								},
+								"sink": {
+									"name": "PricingMethod",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ProviderAssignment",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ProviderAssignment",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "BenefitAssignment",
+									"type": "String"
+								},
+								"sink": {
+									"name": "BenefitAssignment",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ClaimLineID",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ClaimLineID",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ClaimLine_ClaimID",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ClaimLine_ClaimID",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "LineTCN",
+									"type": "String"
+								},
+								"sink": {
+									"name": "LineTCN",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "LineNumber",
+									"type": "String"
+								},
+								"sink": {
+									"name": "LineNumber",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ServicingProviderID",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ServicingProviderID",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ServicingProviderNPI",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ServicingProviderNPI",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ServicingProviderTIN",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ServicingProviderTIN",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ServicingProviderLicenseNumber",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ServicingProviderLicenseNumber",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ServicingProviderProviderName",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ServicingProviderProviderName",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ServicingProviderProviderType",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ServicingProviderProviderType",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ServicingProviderSpecialty",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ServicingProviderSpecialty",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ServicingProviderTaxonomyCode",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ServicingProviderTaxonomyCode",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ServicingProviderAddress",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ServicingProviderAddress",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ServicingProviderCounty",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ServicingProviderCounty",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ServicingProviderState",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ServicingProviderState",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ServicingProviderZIP",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ServicingProviderZIP",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ServiceStartDate",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ServiceStartDate",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ServiceEndDate",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ServiceEndDate",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "PlaceOfServiceCode",
+									"type": "String"
+								},
+								"sink": {
+									"name": "PlaceOfServiceCode",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "TypeOfService",
+									"type": "String"
+								},
+								"sink": {
+									"name": "TypeOfService",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ServiceType",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ServiceType",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "Procedure",
+									"type": "String"
+								},
+								"sink": {
+									"name": "Procedure",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "Modifier1",
+									"type": "String"
+								},
+								"sink": {
+									"name": "Modifier1",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "Modifier2",
+									"type": "String"
+								},
+								"sink": {
+									"name": "Modifier2",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "Modifier3",
+									"type": "String"
+								},
+								"sink": {
+									"name": "Modifier3",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "Modifier4",
+									"type": "String"
+								},
+								"sink": {
+									"name": "Modifier4",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "LineBilledUnits",
+									"type": "String"
+								},
+								"sink": {
+									"name": "LineBilledUnits",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "LineBilledAmount",
+									"type": "String"
+								},
+								"sink": {
+									"name": "LineBilledAmount",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "LineAllowedAmount",
+									"type": "String"
+								},
+								"sink": {
+									"name": "LineAllowedAmount",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "LinePaidAmount",
+									"type": "String"
+								},
+								"sink": {
+									"name": "LinePaidAmount",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ChargePerUnit",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ChargePerUnit",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "DenialReasonCode",
+									"type": "String"
+								},
+								"sink": {
+									"name": "DenialReasonCode",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "AdjustmentReasonCode",
+									"type": "String"
+								},
+								"sink": {
+									"name": "AdjustmentReasonCode",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "LineCopayAmount",
+									"type": "String"
+								},
+								"sink": {
+									"name": "LineCopayAmount",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "LineCoinsuranceAmount",
+									"type": "String"
+								},
+								"sink": {
+									"name": "LineCoinsuranceAmount",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "LineDeductibleAmount",
+									"type": "String"
+								},
+								"sink": {
+									"name": "LineDeductibleAmount",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ClaimLineStatus",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ClaimLineStatus",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "LineBillingType",
+									"type": "String"
+								},
+								"sink": {
+									"name": "LineBillingType",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "LinePricingType",
+									"type": "String"
+								},
+								"sink": {
+									"name": "LinePricingType",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "UpcodingFlag",
+									"type": "String"
+								},
+								"sink": {
+									"name": "UpcodingFlag",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "UnbundlingFlag",
+									"type": "String"
+								},
+								"sink": {
+									"name": "UnbundlingFlag",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "OverutilizationFlag",
+									"type": "String"
+								},
+								"sink": {
+									"name": "OverutilizationFlag",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "MedicallyUnnecessaryFlag",
+									"type": "String"
+								},
+								"sink": {
+									"name": "MedicallyUnnecessaryFlag",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "PTPFlag",
+									"type": "String"
+								},
+								"sink": {
+									"name": "PTPFlag",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "DuplicateFlag",
+									"type": "String"
+								},
+								"sink": {
+									"name": "DuplicateFlag",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "OverBillingFlag",
+									"type": "String"
+								},
+								"sink": {
+									"name": "OverBillingFlag",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "LineSeverity",
+									"type": "String"
+								},
+								"sink": {
+									"name": "LineSeverity",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "Primary_Component",
+									"type": "String"
+								},
+								"sink": {
+									"name": "Primary_Component",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "Mutual_CPT_HCPCS",
+									"type": "String"
+								},
+								"sink": {
+									"name": "Mutual_CPT_HCPCS",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "Pay_or_Deny",
+									"type": "String"
+								},
+								"sink": {
+									"name": "Pay_or_Deny",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "Reason",
+									"type": "String"
+								},
+								"sink": {
+									"name": "Reason",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "Billed_MDM_Category",
+									"type": "String"
+								},
+								"sink": {
+									"name": "Billed_MDM_Category",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "Recommended_Code",
+									"type": "String"
+								},
+								"sink": {
+									"name": "Recommended_Code",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "Month",
+									"type": "String"
+								},
+								"sink": {
+									"name": "Month",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "Week",
+									"type": "String"
+								},
+								"sink": {
+									"name": "Week",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ReviewStatus",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ReviewStatus",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "LineBilledAmountRange",
+									"type": "String"
+								},
+								"sink": {
+									"name": "LineBilledAmountRange",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "UnitOfMeasure",
+									"type": "String"
+								},
+								"sink": {
+									"name": "UnitOfMeasure",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "PurchasingProviderKey",
+									"type": "String"
+								},
+								"sink": {
+									"name": "PurchasingProviderKey",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "SupervisingProviderKey",
+									"type": "String"
+								},
+								"sink": {
+									"name": "SupervisingProviderKey",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "OrderingProviderKey",
+									"type": "String"
+								},
+								"sink": {
+									"name": "OrderingProviderKey",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "EmergencyIndicator",
+									"type": "String"
+								},
+								"sink": {
+									"name": "EmergencyIndicator",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "RevenueCode",
+									"type": "String"
+								},
+								"sink": {
+									"name": "RevenueCode",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "LineThirdPartyLiabilityAmount",
+									"type": "String"
+								},
+								"sink": {
+									"name": "LineThirdPartyLiabilityAmount",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "LinePatientResponsibilityAmount",
+									"type": "String"
+								},
+								"sink": {
+									"name": "LinePatientResponsibilityAmount",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "LevelOfCare",
+									"type": "String"
+								},
+								"sink": {
+									"name": "LevelOfCare",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "RepricingAllowedAmount",
+									"type": "String"
+								},
+								"sink": {
+									"name": "RepricingAllowedAmount",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "RepricingFeeRateAmount",
+									"type": "String"
+								},
+								"sink": {
+									"name": "RepricingFeeRateAmount",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "MedicareAllowedAmount",
+									"type": "String"
+								},
+								"sink": {
+									"name": "MedicareAllowedAmount",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "MedicarePaidAmount",
+									"type": "String"
+								},
+								"sink": {
+									"name": "MedicarePaidAmount",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "RelatedCauseCode1",
+									"type": "String"
+								},
+								"sink": {
+									"name": "RelatedCauseCode1",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "RelatedCauseCode2",
+									"type": "String"
+								},
+								"sink": {
+									"name": "RelatedCauseCode2",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "OccurrenceCode1",
+									"type": "String"
+								},
+								"sink": {
+									"name": "OccurrenceCode1",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "OccurrenceCode2",
+									"type": "String"
+								},
+								"sink": {
+									"name": "OccurrenceCode2",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "OccurrenceCode3",
+									"type": "String"
+								},
+								"sink": {
+									"name": "OccurrenceCode3",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "OccurrenceCode4",
+									"type": "String"
+								},
+								"sink": {
+									"name": "OccurrenceCode4",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "OccurrenceCode5",
+									"type": "String"
+								},
+								"sink": {
+									"name": "OccurrenceCode5",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "OccurrenceCode6",
+									"type": "String"
+								},
+								"sink": {
+									"name": "OccurrenceCode6",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "OccurrenceCode7",
+									"type": "String"
+								},
+								"sink": {
+									"name": "OccurrenceCode7",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "OccurrenceCode8",
+									"type": "String"
+								},
+								"sink": {
+									"name": "OccurrenceCode8",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "OccurrenceCode9",
+									"type": "String"
+								},
+								"sink": {
+									"name": "OccurrenceCode9",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "OccurrenceCode10",
+									"type": "String"
+								},
+								"sink": {
+									"name": "OccurrenceCode10",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "OccurrenceCode11",
+									"type": "String"
+								},
+								"sink": {
+									"name": "OccurrenceCode11",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "OccurrenceCode12",
+									"type": "String"
+								},
+								"sink": {
+									"name": "OccurrenceCode12",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "OccurrenceDateFrom1",
+									"type": "String"
+								},
+								"sink": {
+									"name": "OccurrenceDateFrom1",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "OccurrenceDateFrom2",
+									"type": "String"
+								},
+								"sink": {
+									"name": "OccurrenceDateFrom2",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "OccurrenceDateFrom3",
+									"type": "String"
+								},
+								"sink": {
+									"name": "OccurrenceDateFrom3",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "OccurrenceDateFrom4",
+									"type": "String"
+								},
+								"sink": {
+									"name": "OccurrenceDateFrom4",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "OccurrenceDateFrom5",
+									"type": "String"
+								},
+								"sink": {
+									"name": "OccurrenceDateFrom5",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "OccurrenceDateFrom6",
+									"type": "String"
+								},
+								"sink": {
+									"name": "OccurrenceDateFrom6",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "OccurrenceDateFrom7",
+									"type": "String"
+								},
+								"sink": {
+									"name": "OccurrenceDateFrom7",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "OccurrenceDateFrom8",
+									"type": "String"
+								},
+								"sink": {
+									"name": "OccurrenceDateFrom8",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "OccurrenceDateFrom9",
+									"type": "String"
+								},
+								"sink": {
+									"name": "OccurrenceDateFrom9",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "OccurrenceDateFrom10",
+									"type": "String"
+								},
+								"sink": {
+									"name": "OccurrenceDateFrom10",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "OccurrenceDateFrom11",
+									"type": "String"
+								},
+								"sink": {
+									"name": "OccurrenceDateFrom11",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "OccurrenceDateFrom12",
+									"type": "String"
+								},
+								"sink": {
+									"name": "OccurrenceDateFrom12",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "OccurrenceDateTo1",
+									"type": "String"
+								},
+								"sink": {
+									"name": "OccurrenceDateTo1",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "OccurrenceDateTo2",
+									"type": "String"
+								},
+								"sink": {
+									"name": "OccurrenceDateTo2",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "OccurrenceDateTo3",
+									"type": "String"
+								},
+								"sink": {
+									"name": "OccurrenceDateTo3",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "OccurrenceDateTo4",
+									"type": "String"
+								},
+								"sink": {
+									"name": "OccurrenceDateTo4",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "OccurrenceDateTo5",
+									"type": "String"
+								},
+								"sink": {
+									"name": "OccurrenceDateTo5",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "OccurrenceDateTo6",
+									"type": "String"
+								},
+								"sink": {
+									"name": "OccurrenceDateTo6",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "OccurrenceDateTo7",
+									"type": "String"
+								},
+								"sink": {
+									"name": "OccurrenceDateTo7",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "OccurrenceDateTo8",
+									"type": "String"
+								},
+								"sink": {
+									"name": "OccurrenceDateTo8",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "OccurrenceDateTo9",
+									"type": "String"
+								},
+								"sink": {
+									"name": "OccurrenceDateTo9",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "OccurrenceDateTo10",
+									"type": "String"
+								},
+								"sink": {
+									"name": "OccurrenceDateTo10",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "OccurrenceDateTo11",
+									"type": "String"
+								},
+								"sink": {
+									"name": "OccurrenceDateTo11",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "OccurrenceDateTo12",
+									"type": "String"
+								},
+								"sink": {
+									"name": "OccurrenceDateTo12",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ProcedureTypeCode1",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ProcedureTypeCode1",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ProcedureTypeCode2",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ProcedureTypeCode2",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ProcedureTypeCode3",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ProcedureTypeCode3",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ProcedureTypeCode4",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ProcedureTypeCode4",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ProcedureTypeCode5",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ProcedureTypeCode5",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ProcedureTypeCode6",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ProcedureTypeCode6",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ProcedureTypeCode7",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ProcedureTypeCode7",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ProcedureTypeCode8",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ProcedureTypeCode8",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ProcedureTypeCode9",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ProcedureTypeCode9",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ProcedureTypeCode10",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ProcedureTypeCode10",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ProcedureTypeCode11",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ProcedureTypeCode11",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ProcedureTypeCode12",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ProcedureTypeCode12",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ProcedureTypeCode13",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ProcedureTypeCode13",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ProcedureTypeCode14",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ProcedureTypeCode14",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ProcedureTypeCode15",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ProcedureTypeCode15",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ProcedureTypeCode16",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ProcedureTypeCode16",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ProcedureTypeCode17",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ProcedureTypeCode17",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ProcedureTypeCode18",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ProcedureTypeCode18",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ProcedureTypeCode19",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ProcedureTypeCode19",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ProcedureTypeCode20",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ProcedureTypeCode20",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ProcedureTypeCode21",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ProcedureTypeCode21",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ProcedureTypeCode22",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ProcedureTypeCode22",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ProcedureTypeCode23",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ProcedureTypeCode23",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ProcedureTypeCode24",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ProcedureTypeCode24",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ProcedureTypeCode25",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ProcedureTypeCode25",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ProcedureDate1",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ProcedureDate1",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ProcedureDate2",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ProcedureDate2",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ProcedureDate3",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ProcedureDate3",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ProcedureDate4",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ProcedureDate4",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ProcedureDate5",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ProcedureDate5",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ProcedureDate6",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ProcedureDate6",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ProcedureDate7",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ProcedureDate7",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ProcedureDate8",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ProcedureDate8",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ProcedureDate9",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ProcedureDate9",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ProcedureDate10",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ProcedureDate10",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ProcedureDate11",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ProcedureDate11",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ProcedureDate12",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ProcedureDate12",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ProcedureDate13",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ProcedureDate13",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ProcedureDate14",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ProcedureDate14",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ProcedureDate15",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ProcedureDate15",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ProcedureDate16",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ProcedureDate16",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ProcedureDate17",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ProcedureDate17",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ProcedureDate18",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ProcedureDate18",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ProcedureDate19",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ProcedureDate19",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ProcedureDate20",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ProcedureDate20",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ProcedureDate21",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ProcedureDate21",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ProcedureDate22",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ProcedureDate22",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ProcedureDate23",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ProcedureDate23",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ProcedureDate24",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ProcedureDate24",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "ProcedureDate25",
+									"type": "String"
+								},
+								"sink": {
+									"name": "ProcedureDate25",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "NDCCode",
+									"type": "String"
+								},
+								"sink": {
+									"name": "NDCCode",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "PHARMClass",
+									"type": "String"
+								},
+								"sink": {
+									"name": "PHARMClass",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "NDCQty",
+									"type": "String"
+								},
+								"sink": {
+									"name": "NDCQty",
+									"type": "String"
+								}
+							},
+							{
+								"source": {
+									"name": "NDCUnits",
+									"type": "String"
+								},
+								"sink": {
+									"name": "NDCUnits",
+									"type": "String"
+								}
+							}
+						],
+						"typeConversion": true,
+						"typeConversionSettings": {
+							"allowDataTruncation": true,
+							"treatBooleanAsNumber": false
+						}
+					}
+				},
+				"inputs": [
+					{
+						"referenceName": "DS_Plexis_Delimited_File",
+						"type": "DatasetReference",
+						"parameters": {
+							"ContainerName": {
+								"value": "@pipeline().parameters.ContainerName",
+								"type": "Expression"
+							},
+							"FolderPath": {
+								"value": "@pipeline().parameters.BatchFolder",
+								"type": "Expression"
+							},
+							"FileName": {
+								"value": "@pipeline().parameters.ClaimsFileName",
+								"type": "Expression"
+							},
+							"Delimiter": "|",
+							"FirstRowAsHeader": true
+						}
+					}
+				],
+				"outputs": [
+					{
+						"referenceName": "DS_SQLMI_Table",
+						"type": "DatasetReference",
+						"parameters": {
+							"SchemaName": "stg",
+							"TableName": "Plexis_Claim"
+						}
+					}
+				]
+			},
+			{
+				"name": "SP_CompleteFileCopy",
+				"type": "SqlServerStoredProcedure",
+				"dependsOn": [
+					{
+						"activity": "CP_Claims_To_Staging",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					}
+				],
+				"policy": {
+					"timeout": "0.02:00:00",
+					"retry": 2,
+					"retryIntervalInSeconds": 60,
+					"secureOutput": false,
+					"secureInput": false
+				},
+				"userProperties": [],
+				"typeProperties": {
+					"storedProcedureName": "[etl].[sp_Complete_File]",
+					"storedProcedureParameters": {
+						"FileLoadId": {
+							"value": {
+								"value": "@variables('vFileLoadId')",
+								"type": "Expression"
+							},
+							"type": "Int64"
+						},
+						"RowsRead": {
+							"value": {
+								"value": "@activity('CP_Claims_To_Staging').output.rowsRead",
+								"type": "Expression"
+							},
+							"type": "Int64"
+						},
+						"RowsCopied": {
+							"value": {
+								"value": "@activity('CP_Claims_To_Staging').output.rowsCopied",
+								"type": "Expression"
+							},
+							"type": "Int64"
+						},
+						"RowsSkipped": {
+							"value": {
+								"value": "@activity('CP_Claims_To_Staging').output.rowsSkipped",
+								"type": "Expression"
+							},
+							"type": "Int64"
+						},
+						"Status": {
+							"value": "IN_PROGRESS",
+							"type": "String"
+						}
+					}
+				},
+				"linkedServiceName": {
+					"referenceName": "AzureSqlDatabaseLinkedService",
+					"type": "LinkedServiceReference"
+				}
+			},
+			{
+				"name": "LKP_ProcessClaims",
+				"type": "Lookup",
+				"dependsOn": [
+					{
+						"activity": "SP_CompleteFileCopy",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					}
+				],
+				"policy": {
+					"timeout": "0.02:00:00",
+					"retry": 1,
+					"retryIntervalInSeconds": 60
+				},
+				"userProperties": [
+					{
+						"name": "why",
+						"value": "Set-based transform runs inside SQL MI. Moving 300+ columns through a Data Flow cluster would cost far more for no benefit."
+					}
+				],
+				"typeProperties": {
+					"source": {
+						"type": "AzureSqlSource",
+						"sqlReaderStoredProcedureName": "[etl].[sp_Process_Plexis_Claim]",
+						"storedProcedureParameters": {
+							"BatchId": {
+								"type": "Int64",
+								"value": {
+									"value": "@pipeline().parameters.BatchId",
+									"type": "Expression"
+								}
+							},
+							"FileLoadId": {
+								"type": "Int64",
+								"value": {
+									"value": "@variables('vFileLoadId')",
+									"type": "Expression"
+								}
+							},
+							"MaxRejectPct": {
+								"type": "Decimal",
+								"value": {
+									"value": "@string(pipeline().parameters.MaxRejectPct)",
+									"type": "Expression"
+								}
+							}
+						},
+						"queryTimeout": "02:00:00",
+						"partitionOption": "None"
+					},
+					"dataset": {
+						"referenceName": "DS_SQLMI_Table",
+						"type": "DatasetReference",
+						"parameters": {
+							"SchemaName": "dbo",
+							"TableName": "Claim_Header"
+						}
+					},
+					"firstRowOnly": true
+				}
+			},
+			{
+				"name": "SP_FailFile",
+				"type": "SqlServerStoredProcedure",
+				"dependsOn": [
+					{
+						"activity": "CP_Claims_To_Staging",
+						"dependencyConditions": [
+							"Failed"
+						]
+					},
+					{
+						"activity": "LKP_ProcessClaims",
+						"dependencyConditions": [
+							"Failed"
+						]
+					}
+				],
+				"policy": {
+					"timeout": "0.00:10:00",
+					"retry": 3,
+					"retryIntervalInSeconds": 30
+				},
+				"userProperties": [],
+				"typeProperties": {
+					"storedProcedureName": "[etl].[sp_Complete_File]",
+					"storedProcedureParameters": {
+						"FileLoadId": {
+							"value": {
+								"value": "@variables('vFileLoadId')",
+								"type": "Expression"
+							},
+							"type": "Int64"
+						},
+						"Status": {
+							"value": "FAILED",
+							"type": "String"
+						},
+						"ErrorMessage": {
+							"value": {
+								"value": "@concat('Claims load failed. ', string(coalesce(activity('LKP_ProcessClaims').error.message, activity('CP_Claims_To_Staging').error.message)))",
+								"type": "Expression"
+							},
+							"type": "String"
+						}
+					}
+				},
+				"linkedServiceName": {
+					"referenceName": "AzureSqlDatabaseLinkedService",
+					"type": "LinkedServiceReference"
+				}
+			},
+			{
+				"name": "FAIL_ClaimsLoad",
+				"type": "Fail",
+				"dependsOn": [
+					{
+						"activity": "SP_FailFile",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					}
+				],
+				"userProperties": [],
+				"typeProperties": {
+					"message": {
+						"value": "@concat('Claims load failed for Batch_Id ', string(pipeline().parameters.BatchId), '. See etl.File_Load and etl.Load_Error.')",
+						"type": "Expression"
+					},
+					"errorCode": "PLX_CLAIMS_LOAD_FAILED"
+				}
+			}
+		],
+		"parameters": {
+			"BatchId": {
+				"type": "int"
+			},
+			"ContainerName": {
+				"type": "string"
+			},
+			"BatchFolder": {
+				"type": "string"
+			},
+			"ClaimsFileName": {
+				"type": "string"
+			},
+			"ExpectedColumnCount": {
+				"type": "int",
+				"defaultValue": 304
+			},
+			"MaxRejectPct": {
+				"type": "string",
+				"defaultValue": "5.00"
+			}
+		},
+		"variables": {
+			"vFileLoadId": {
+				"type": "String"
+			}
+		},
+		"folder": {
+			"name": "Plexis/Children"
+		},
+		"annotations": [
+			"plexis",
+			"claims"
+		]
+	}
 }

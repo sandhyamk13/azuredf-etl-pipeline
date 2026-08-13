@@ -49,7 +49,6 @@
 				"value": "@dataset().Delimiter",
 				"type": "Expression"
 			},
-			"rowDelimiter": "\r\n",
 			"encodingName": "UTF-8",
 			"escapeChar": "\"",
 			"firstRowAsHeader": {

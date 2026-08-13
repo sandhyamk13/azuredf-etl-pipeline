@@ -7,7 +7,11 @@
 		},
 		"annotations": [],
 		"type": "AzureSqlTable",
-		"schema": []
+		"schema": [],
+		"typeProperties": {
+			"schema": "dbo",
+			"table": "FACT_CLAIM_HEADER"
+		}
 	},
 	"type": "Microsoft.DataFactory/factories/datasets"
 }
