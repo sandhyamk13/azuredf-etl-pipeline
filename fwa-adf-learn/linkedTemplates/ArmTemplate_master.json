@@ -1,0 +1,123 @@
+{
+	"$schema": "http://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+	"contentVersion": "1.0.0.0",
+	"parameters": {
+		"factoryName": {
+			"type": "string",
+			"metadata": "Data Factory name",
+			"defaultValue": "fwa-adf-learn"
+		},
+		"AzureSqlDatabaseLinkedService_password": {
+			"type": "secureString",
+			"metadata": "Secure string for 'password' of 'AzureSqlDatabaseLinkedService'"
+		},
+		"AzureSqlDatabaseLinkedService_properties_typeProperties_server": {
+			"type": "string",
+			"defaultValue": "adf-server-learn.database.windows.net"
+		},
+		"AzureSqlDatabaseLinkedService_properties_typeProperties_database": {
+			"type": "string",
+			"defaultValue": "free-sql-db-7267555"
+		},
+		"AzureSqlDatabaseLinkedService_properties_typeProperties_userName": {
+			"type": "string",
+			"defaultValue": "adfserver"
+		},
+		"BlobStorageLinkedService_properties_typeProperties_serviceEndpoint": {
+			"type": "string",
+			"defaultValue": "https://adfstorageaccount722.blob.core.windows.net/"
+		},
+		"blobstorageprivateendpoint_properties_privateLinkResourceId": {
+			"type": "string",
+			"defaultValue": "/subscriptions/05c97be1-b90a-44aa-8ed9-b1ab9d3675d4/resourceGroups/learnadf-demo/providers/Microsoft.Storage/storageAccounts/adfstorageaccount722"
+		},
+		"blobstorageprivateendpoint_properties_groupId": {
+			"type": "string",
+			"defaultValue": "blob"
+		},
+		"blobstorageprivateendpoint_properties_fqdns": {
+			"type": "array",
+			"defaultValue": [
+				"adfstorageaccount722.blob.core.windows.net"
+			]
+		},
+		"sqldbprivateendpoint_properties_privateLinkResourceId": {
+			"type": "string",
+			"defaultValue": "/subscriptions/05c97be1-b90a-44aa-8ed9-b1ab9d3675d4/resourceGroups/datafactory-rg345/providers/Microsoft.Sql/servers/adf-server-learn"
+		},
+		"sqldbprivateendpoint_properties_groupId": {
+			"type": "string",
+			"defaultValue": "sqlServer"
+		},
+		"sqldbprivateendpoint_properties_fqdns": {
+			"type": "array",
+			"defaultValue": [
+				"adf-server-learn.database.windows.net"
+			]
+		},
+		"containerUri": {
+			"type": "string",
+			"metadata": "URI to storage account containing linked ARM templates"
+		},
+		"containerSasToken": {
+			"type": "string",
+			"metadata": "Sas token to storage account containing linked ARM templates"
+		}
+	},
+	"variables": {
+		"factoryId": "[concat('Microsoft.DataFactory/factories/', parameters('factoryName'))]"
+	},
+	"resources": [
+		{
+			"name": "fwa-adf-learn_ArmTemplate_0",
+			"type": "Microsoft.Resources/deployments",
+			"apiVersion": "2024-03-01",
+			"properties": {
+				"mode": "incremental",
+				"templateLink": {
+					"uri": "[concat(parameters('containerUri'), '/ArmTemplate_0.json', parameters('containerSasToken'))]",
+					"contentVersion": "1.0.0.0"
+				},
+				"parameters": {
+					"factoryName": {
+						"value": "[parameters('factoryName')]"
+					},
+					"AzureSqlDatabaseLinkedService_password": {
+						"value": "[parameters('AzureSqlDatabaseLinkedService_password')]"
+					},
+					"blobstorageprivateendpoint_properties_privateLinkResourceId": {
+						"value": "[parameters('blobstorageprivateendpoint_properties_privateLinkResourceId')]"
+					},
+					"blobstorageprivateendpoint_properties_groupId": {
+						"value": "[parameters('blobstorageprivateendpoint_properties_groupId')]"
+					},
+					"blobstorageprivateendpoint_properties_fqdns": {
+						"value": "[parameters('blobstorageprivateendpoint_properties_fqdns')]"
+					},
+					"sqldbprivateendpoint_properties_privateLinkResourceId": {
+						"value": "[parameters('sqldbprivateendpoint_properties_privateLinkResourceId')]"
+					},
+					"sqldbprivateendpoint_properties_groupId": {
+						"value": "[parameters('sqldbprivateendpoint_properties_groupId')]"
+					},
+					"sqldbprivateendpoint_properties_fqdns": {
+						"value": "[parameters('sqldbprivateendpoint_properties_fqdns')]"
+					},
+					"AzureSqlDatabaseLinkedService_properties_typeProperties_server": {
+						"value": "[parameters('AzureSqlDatabaseLinkedService_properties_typeProperties_server')]"
+					},
+					"AzureSqlDatabaseLinkedService_properties_typeProperties_database": {
+						"value": "[parameters('AzureSqlDatabaseLinkedService_properties_typeProperties_database')]"
+					},
+					"AzureSqlDatabaseLinkedService_properties_typeProperties_userName": {
+						"value": "[parameters('AzureSqlDatabaseLinkedService_properties_typeProperties_userName')]"
+					},
+					"BlobStorageLinkedService_properties_typeProperties_serviceEndpoint": {
+						"value": "[parameters('BlobStorageLinkedService_properties_typeProperties_serviceEndpoint')]"
+					}
+				}
+			},
+			"dependsOn": []
+		}
+	]
+}

@@ -1,0 +1,17 @@
+{
+	"name": "OutputSqlDataSet",
+	"properties": {
+		"linkedServiceName": {
+			"referenceName": "AzureSqlDatabaseLinkedService",
+			"type": "LinkedServiceReference"
+		},
+		"annotations": [],
+		"type": "AzureSqlTable",
+		"schema": [],
+		"typeProperties": {
+			"schema": "dbo",
+			"table": "FACT_CLAIM_HEADER"
+		}
+	},
+	"type": "Microsoft.DataFactory/factories/datasets"
+}

@@ -1,0 +1,16 @@
+{
+	"name": "BlobStorageLinkedService",
+	"type": "Microsoft.DataFactory/factories/linkedservices",
+	"properties": {
+		"annotations": [],
+		"type": "AzureBlobStorage",
+		"typeProperties": {
+			"serviceEndpoint": "https://adfstorageaccount722.blob.core.windows.net/",
+			"accountKind": "StorageV2"
+		},
+		"connectVia": {
+			"referenceName": "managedVmIntegrationRuntime",
+			"type": "IntegrationRuntimeReference"
+		}
+	}
+}

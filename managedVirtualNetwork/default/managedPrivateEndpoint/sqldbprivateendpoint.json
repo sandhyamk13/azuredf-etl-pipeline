@@ -1,0 +1,10 @@
+{
+	"name": "sqldbprivateendpoint",
+	"properties": {
+		"privateLinkResourceId": "/subscriptions/05c97be1-b90a-44aa-8ed9-b1ab9d3675d4/resourceGroups/datafactory-rg345/providers/Microsoft.Sql/servers/adf-server-learn",
+		"groupId": "sqlServer",
+		"fqdns": [
+			"adf-server-learn.database.windows.net"
+		]
+	}
+}

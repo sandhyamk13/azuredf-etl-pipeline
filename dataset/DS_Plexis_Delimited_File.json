@@ -1,0 +1,62 @@
+{
+	"name": "DS_Plexis_Delimited_File",
+	"properties": {
+		"description": "One dataset for every Plexis flat file. Schema deliberately left empty so it can serve Member, Provider and Claims; column contracts are enforced by explicit Copy mappings and the columnCount check, not by a per-file dataset.",
+		"linkedServiceName": {
+			"referenceName": "BlobStorageLinkedService",
+			"type": "LinkedServiceReference"
+		},
+		"parameters": {
+			"ContainerName": {
+				"type": "string"
+			},
+			"FolderPath": {
+				"type": "string"
+			},
+			"FileName": {
+				"type": "string"
+			},
+			"Delimiter": {
+				"type": "string",
+				"defaultValue": "|"
+			},
+			"FirstRowAsHeader": {
+				"type": "bool",
+				"defaultValue": true
+			}
+		},
+		"annotations": [
+			"plexis"
+		],
+		"type": "DelimitedText",
+		"typeProperties": {
+			"location": {
+				"type": "AzureBlobStorageLocation",
+				"fileName": {
+					"value": "@dataset().FileName",
+					"type": "Expression"
+				},
+				"folderPath": {
+					"value": "@dataset().FolderPath",
+					"type": "Expression"
+				},
+				"container": {
+					"value": "@dataset().ContainerName",
+					"type": "Expression"
+				}
+			},
+			"columnDelimiter": {
+				"value": "@dataset().Delimiter",
+				"type": "Expression"
+			},
+			"encodingName": "UTF-8",
+			"escapeChar": "\"",
+			"firstRowAsHeader": {
+				"value": "@dataset().FirstRowAsHeader",
+				"type": "Expression"
+			},
+			"quoteChar": "\""
+		},
+		"schema": []
+	}
+}

@@ -1,0 +1,52 @@
+{
+	"$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentParameters.json#",
+	"contentVersion": "1.0.0.0",
+	"parameters": {
+		"factoryName": {
+			"value": "fwa-adf-learn"
+		},
+		"AzureSqlDatabaseLinkedService_password": {
+			"value": ""
+		},
+		"AzureSqlDatabaseLinkedService_properties_typeProperties_server": {
+			"value": "adf-server-learn.database.windows.net"
+		},
+		"AzureSqlDatabaseLinkedService_properties_typeProperties_database": {
+			"value": "free-sql-db-7267555"
+		},
+		"AzureSqlDatabaseLinkedService_properties_typeProperties_userName": {
+			"value": "adfserver"
+		},
+		"BlobStorageLinkedService_properties_typeProperties_serviceEndpoint": {
+			"value": "https://adfstorageaccount722.blob.core.windows.net/"
+		},
+		"blobstorageprivateendpoint_properties_privateLinkResourceId": {
+			"value": "/subscriptions/05c97be1-b90a-44aa-8ed9-b1ab9d3675d4/resourceGroups/learnadf-demo/providers/Microsoft.Storage/storageAccounts/adfstorageaccount722"
+		},
+		"blobstorageprivateendpoint_properties_groupId": {
+			"value": "blob"
+		},
+		"blobstorageprivateendpoint_properties_fqdns": {
+			"value": [
+				"adfstorageaccount722.blob.core.windows.net"
+			]
+		},
+		"sqldbprivateendpoint_properties_privateLinkResourceId": {
+			"value": "/subscriptions/05c97be1-b90a-44aa-8ed9-b1ab9d3675d4/resourceGroups/datafactory-rg345/providers/Microsoft.Sql/servers/adf-server-learn"
+		},
+		"sqldbprivateendpoint_properties_groupId": {
+			"value": "sqlServer"
+		},
+		"sqldbprivateendpoint_properties_fqdns": {
+			"value": [
+				"adf-server-learn.database.windows.net"
+			]
+		},
+		"containerUri": {
+			"value": ""
+		},
+		"containerSasToken": {
+			"value": ""
+		}
+	}
+}
