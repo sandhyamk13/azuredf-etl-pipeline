@@ -1,135 +1,138 @@
 {
-  "name": "PL_Archive_Batch_Files",
-  "properties": {
-    "description": "Copy-then-Delete. Blob has no atomic move, so the copy must be verified before the source is removed.",
-    "activities": [
-      {
-        "name": "CP_Landing_To_Archive",
-        "type": "Copy",
-        "dependsOn": [],
-        "policy": {
-          "timeout": "0.01:00:00",
-          "retry": 2,
-          "retryIntervalInSeconds": 60
-        },
-        "typeProperties": {
-          "source": {
-            "type": "BinarySource",
-            "storeSettings": {
-              "type": "AzureBlobStorageReadSettings",
-              "recursive": true,
-              "wildcardFileName": "*"
-            }
-          },
-          "sink": {
-            "type": "BinarySink",
-            "storeSettings": {
-              "type": "AzureBlobStorageWriteSettings"
-            }
-          }
-        },
-        "inputs": [
-          {
-            "referenceName": "DS_Plexis_Binary_Folder",
-            "type": "DatasetReference",
-            "parameters": {
-              "ContainerName": {
-                "value": "@pipeline().parameters.ContainerName",
-                "type": "Expression"
-              },
-              "FolderPath": {
-                "value": "@pipeline().parameters.SourceFolder",
-                "type": "Expression"
-              }
-            }
-          }
-        ],
-        "outputs": [
-          {
-            "referenceName": "DS_Plexis_Binary_Folder",
-            "type": "DatasetReference",
-            "parameters": {
-              "ContainerName": {
-                "value": "@pipeline().parameters.ContainerName",
-                "type": "Expression"
-              },
-              "FolderPath": {
-                "value": "@pipeline().parameters.TargetFolder",
-                "type": "Expression"
-              }
-            }
-          }
-        ]
-      },
-      {
-        "name": "DEL_Landing",
-        "type": "Delete",
-        "dependsOn": [
-          {
-            "activity": "CP_Landing_To_Archive",
-            "dependencyConditions": [
-              "Succeeded"
-            ]
-          }
-        ],
-        "policy": {
-          "timeout": "0.01:00:00",
-          "retry": 2,
-          "retryIntervalInSeconds": 60
-        },
-        "userProperties": [
-          {
-            "name": "why",
-            "value": "Runs only on Copy Succeeded. enableLogging keeps a record of exactly what was deleted."
-          }
-        ],
-        "typeProperties": {
-          "dataset": {
-            "referenceName": "DS_Plexis_Binary_Folder",
-            "parameters": {
-              "ContainerName": {
-                "value": "@pipeline().parameters.ContainerName",
-                "type": "Expression"
-              },
-              "FolderPath": {
-                "value": "@pipeline().parameters.SourceFolder",
-                "type": "Expression"
-              }
-            }
-          },
-          "enableLogging": true,
-          "logStorageSettings": {
-            "linkedServiceName": {
-              "referenceName": "LS_Plexis_Blob",
-              "type": "LinkedServiceReference"
-            },
-            "path": "plexis/logs/delete"
-          },
-          "storeSettings": {
-            "type": "AzureBlobStorageReadSettings",
-            "recursive": true,
-            "wildcardFileName": "*"
-          }
-        }
-      }
-    ],
-    "parameters": {
-      "ContainerName": {
-        "type": "string"
-      },
-      "SourceFolder": {
-        "type": "string"
-      },
-      "TargetFolder": {
-        "type": "string"
-      }
-    },
-    "folder": {
-      "name": "Plexis/Utility"
-    },
-    "annotations": [
-      "plexis",
-      "archive"
-    ]
-  }
+	"name": "PL_Archive_Batch_Files",
+	"properties": {
+		"description": "Copy-then-Delete. Blob has no atomic move, so the copy must be verified before the source is removed.",
+		"activities": [
+			{
+				"name": "CP_Landing_To_Archive",
+				"type": "Copy",
+				"dependsOn": [],
+				"policy": {
+					"timeout": "0.01:00:00",
+					"retry": 2,
+					"retryIntervalInSeconds": 60
+				},
+				"userProperties": [],
+				"typeProperties": {
+					"source": {
+						"type": "BinarySource",
+						"storeSettings": {
+							"type": "AzureBlobStorageReadSettings",
+							"recursive": true,
+							"wildcardFileName": "*"
+						}
+					},
+					"sink": {
+						"type": "BinarySink",
+						"storeSettings": {
+							"type": "AzureBlobStorageWriteSettings"
+						}
+					},
+					"enableStaging": false
+				},
+				"inputs": [
+					{
+						"referenceName": "DS_Plexis_Binary_Folder",
+						"type": "DatasetReference",
+						"parameters": {
+							"ContainerName": {
+								"value": "@pipeline().parameters.ContainerName",
+								"type": "Expression"
+							},
+							"FolderPath": {
+								"value": "@pipeline().parameters.SourceFolder",
+								"type": "Expression"
+							}
+						}
+					}
+				],
+				"outputs": [
+					{
+						"referenceName": "DS_Plexis_Binary_Folder",
+						"type": "DatasetReference",
+						"parameters": {
+							"ContainerName": {
+								"value": "@pipeline().parameters.ContainerName",
+								"type": "Expression"
+							},
+							"FolderPath": {
+								"value": "@pipeline().parameters.TargetFolder",
+								"type": "Expression"
+							}
+						}
+					}
+				]
+			},
+			{
+				"name": "DEL_Landing",
+				"type": "Delete",
+				"dependsOn": [
+					{
+						"activity": "CP_Landing_To_Archive",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					}
+				],
+				"policy": {
+					"timeout": "0.01:00:00",
+					"retry": 2,
+					"retryIntervalInSeconds": 60
+				},
+				"userProperties": [
+					{
+						"name": "why",
+						"value": "Runs only on Copy Succeeded. enableLogging keeps a record of exactly what was deleted."
+					}
+				],
+				"typeProperties": {
+					"dataset": {
+						"referenceName": "DS_Plexis_Binary_Folder",
+						"type": "DatasetReference",
+						"parameters": {
+							"ContainerName": {
+								"value": "@pipeline().parameters.ContainerName",
+								"type": "Expression"
+							},
+							"FolderPath": {
+								"value": "@pipeline().parameters.SourceFolder",
+								"type": "Expression"
+							}
+						}
+					},
+					"logStorageSettings": {
+						"linkedServiceName": {
+							"referenceName": "BlobStorageLinkedService",
+							"type": "LinkedServiceReference"
+						},
+						"path": "plexis/logs/delete"
+					},
+					"enableLogging": true,
+					"storeSettings": {
+						"type": "AzureBlobStorageReadSettings",
+						"recursive": true,
+						"wildcardFileName": "*"
+					}
+				}
+			}
+		],
+		"parameters": {
+			"ContainerName": {
+				"type": "string"
+			},
+			"SourceFolder": {
+				"type": "string"
+			},
+			"TargetFolder": {
+				"type": "string"
+			}
+		},
+		"folder": {
+			"name": "Plexis/Utility"
+		},
+		"annotations": [
+			"plexis",
+			"archive"
+		]
+	}
 }
