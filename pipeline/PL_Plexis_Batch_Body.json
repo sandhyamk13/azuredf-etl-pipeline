@@ -1,0 +1,262 @@
+{
+  "name": "PL_Plexis_Batch_Body",
+  "properties": {
+    "description": "Sequenced data movement. Member -> Provider -> Claims -> reconcile. Fails fast; the master owns the terminal state.",
+    "activities": [
+      {
+        "name": "IF_LoadMember",
+        "type": "IfCondition",
+        "dependsOn": [],
+        "typeProperties": {
+          "expression": {
+            "value": "@pipeline().parameters.LoadMember",
+            "type": "Expression"
+          },
+          "ifTrueActivities": [
+            {
+              "name": "EP_Member",
+              "type": "ExecutePipeline",
+              "dependsOn": [],
+              "typeProperties": {
+                "pipeline": {
+                  "referenceName": "PL_Load_Plexis_Member",
+                  "type": "PipelineReference"
+                },
+                "waitOnCompletion": true,
+                "parameters": {
+                  "BatchId": {
+                    "value": "@pipeline().parameters.BatchId",
+                    "type": "Expression"
+                  },
+                  "ContainerName": {
+                    "value": "@pipeline().parameters.ContainerName",
+                    "type": "Expression"
+                  },
+                  "BatchFolder": {
+                    "value": "@pipeline().parameters.BatchFolder",
+                    "type": "Expression"
+                  },
+                  "FileName": {
+                    "value": "@pipeline().parameters.MemberFileName",
+                    "type": "Expression"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      },
+      {
+        "name": "IF_LoadProvider",
+        "type": "IfCondition",
+        "dependsOn": [
+          {
+            "activity": "IF_LoadMember",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ],
+        "userProperties": [
+          {
+            "name": "why",
+            "value": "Sequential, not parallel: claims reference members and providers, and serialising also keeps SQL MI vCore pressure predictable."
+          }
+        ],
+        "typeProperties": {
+          "expression": {
+            "value": "@pipeline().parameters.LoadProvider",
+            "type": "Expression"
+          },
+          "ifTrueActivities": [
+            {
+              "name": "EP_Provider",
+              "type": "ExecutePipeline",
+              "dependsOn": [],
+              "typeProperties": {
+                "pipeline": {
+                  "referenceName": "PL_Load_Plexis_Provider",
+                  "type": "PipelineReference"
+                },
+                "waitOnCompletion": true,
+                "parameters": {
+                  "BatchId": {
+                    "value": "@pipeline().parameters.BatchId",
+                    "type": "Expression"
+                  },
+                  "ContainerName": {
+                    "value": "@pipeline().parameters.ContainerName",
+                    "type": "Expression"
+                  },
+                  "BatchFolder": {
+                    "value": "@pipeline().parameters.BatchFolder",
+                    "type": "Expression"
+                  },
+                  "FileName": {
+                    "value": "@pipeline().parameters.ProviderFileName",
+                    "type": "Expression"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      },
+      {
+        "name": "EP_Claims",
+        "type": "ExecutePipeline",
+        "dependsOn": [
+          {
+            "activity": "IF_LoadProvider",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ],
+        "typeProperties": {
+          "pipeline": {
+            "referenceName": "PL_Load_Plexis_Claims",
+            "type": "PipelineReference"
+          },
+          "waitOnCompletion": true,
+          "parameters": {
+            "BatchId": {
+              "value": "@pipeline().parameters.BatchId",
+              "type": "Expression"
+            },
+            "ContainerName": {
+              "value": "@pipeline().parameters.ContainerName",
+              "type": "Expression"
+            },
+            "BatchFolder": {
+              "value": "@pipeline().parameters.BatchFolder",
+              "type": "Expression"
+            },
+            "ClaimsFileName": {
+              "value": "@pipeline().parameters.ClaimsFileName",
+              "type": "Expression"
+            }
+          }
+        }
+      },
+      {
+        "name": "LKP_Reconcile",
+        "type": "Lookup",
+        "dependsOn": [
+          {
+            "activity": "EP_Claims",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ],
+        "policy": {
+          "timeout": "0.02:00:00",
+          "retry": 2,
+          "retryIntervalInSeconds": 60,
+          "secureOutput": false,
+          "secureInput": false
+        },
+        "typeProperties": {
+          "source": {
+            "type": "AzureSqlSource",
+            "queryTimeout": "00:30:00",
+            "sqlReaderStoredProcedureName": "[etl].[sp_Reconcile_Batch]",
+            "storedProcedureParameters": {
+              "BatchId": {
+                "value": {
+                  "value": "@pipeline().parameters.BatchId",
+                  "type": "Expression"
+                },
+                "type": "Int64"
+              }
+            }
+          },
+          "dataset": {
+            "referenceName": "DS_SQLMI_Table",
+            "parameters": {
+              "SchemaName": "etl",
+              "TableName": "Batch_Reconciliation"
+            }
+          },
+          "firstRowOnly": true
+        }
+      },
+      {
+        "name": "IF_ReconPassed",
+        "type": "IfCondition",
+        "dependsOn": [
+          {
+            "activity": "LKP_Reconcile",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ],
+        "userProperties": [
+          {
+            "name": "why",
+            "value": "Reconciliation failure is a Fail, not a warning. Silent count/amount drift is the failure mode that costs the most to find later."
+          }
+        ],
+        "typeProperties": {
+          "expression": {
+            "value": "@equals(activity('LKP_Reconcile').output.firstRow.ReconStatus, 'PASS')",
+            "type": "Expression"
+          },
+          "ifFalseActivities": [
+            {
+              "name": "FAIL_Reconciliation",
+              "type": "Fail",
+              "dependsOn": [],
+              "typeProperties": {
+                "message": {
+                  "value": "@concat('Reconciliation failed for Batch_Id ', string(pipeline().parameters.BatchId), '. Failed checks: ', coalesce(activity('LKP_Reconcile').output.firstRow.FailedList, 'see etl.Batch_Reconciliation'))",
+                  "type": "Expression"
+                },
+                "errorCode": "PLX_RECON_FAILED"
+              }
+            }
+          ]
+        }
+      }
+    ],
+    "parameters": {
+      "BatchId": {
+        "type": "int"
+      },
+      "ContainerName": {
+        "type": "string"
+      },
+      "BatchFolder": {
+        "type": "string"
+      },
+      "MemberFileName": {
+        "type": "string",
+        "defaultValue": ""
+      },
+      "ProviderFileName": {
+        "type": "string",
+        "defaultValue": ""
+      },
+      "ClaimsFileName": {
+        "type": "string"
+      },
+      "LoadMember": {
+        "type": "bool",
+        "defaultValue": false
+      },
+      "LoadProvider": {
+        "type": "bool",
+        "defaultValue": false
+      }
+    },
+    "folder": {
+      "name": "Plexis/Master"
+    },
+    "annotations": [
+      "plexis",
+      "body"
+    ]
+  }
+}
