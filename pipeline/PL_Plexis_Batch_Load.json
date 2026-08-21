@@ -338,7 +338,6 @@
 							},
 							"userProperties": [],
 							"typeProperties": {
-								"storedProcedureName": "[etl].[sp_Reverse_Batch]",
 								"storedProcedureParameters": {
 									"BatchKey": {
 										"value": {
@@ -348,6 +347,10 @@
 										"type": "String"
 									}
 								}
+							},
+							"linkedServiceName": {
+								"referenceName": "AzureSqlDatabaseLinkedService",
+								"type": "LinkedServiceReference"
 							}
 						}
 					]
@@ -435,7 +438,6 @@
 				},
 				"userProperties": [],
 				"typeProperties": {
-					"storedProcedureName": "[etl].[sp_Complete_Batch]",
 					"storedProcedureParameters": {
 						"BatchId": {
 							"value": {
@@ -445,6 +447,10 @@
 							"type": "Int64"
 						}
 					}
+				},
+				"linkedServiceName": {
+					"referenceName": "AzureSqlDatabaseLinkedService",
+					"type": "LinkedServiceReference"
 				}
 			},
 			{
@@ -553,6 +559,10 @@
 							"type": "String"
 						}
 					}
+				},
+				"linkedServiceName": {
+					"referenceName": "AzureSqlDatabaseLinkedService",
+					"type": "LinkedServiceReference"
 				}
 			},
 			{
