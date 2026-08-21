@@ -23,25 +23,7 @@
 							},
 							"userProperties": [],
 							"typeProperties": {
-								"waitOnCompletion": true,
-								"parameters": {
-									"BatchId": {
-										"value": "@pipeline().parameters.BatchId",
-										"type": "Expression"
-									},
-									"ContainerName": {
-										"value": "@pipeline().parameters.ContainerName",
-										"type": "Expression"
-									},
-									"BatchFolder": {
-										"value": "@pipeline().parameters.BatchFolder",
-										"type": "Expression"
-									},
-									"FileName": {
-										"value": "@pipeline().parameters.MemberFileName",
-										"type": "Expression"
-									}
-								}
+								"waitOnCompletion": true
 							}
 						}
 					]
@@ -79,25 +61,7 @@
 							},
 							"userProperties": [],
 							"typeProperties": {
-								"waitOnCompletion": true,
-								"parameters": {
-									"BatchId": {
-										"value": "@pipeline().parameters.BatchId",
-										"type": "Expression"
-									},
-									"ContainerName": {
-										"value": "@pipeline().parameters.ContainerName",
-										"type": "Expression"
-									},
-									"BatchFolder": {
-										"value": "@pipeline().parameters.BatchFolder",
-										"type": "Expression"
-									},
-									"FileName": {
-										"value": "@pipeline().parameters.ProviderFileName",
-										"type": "Expression"
-									}
-								}
+								"waitOnCompletion": true
 							}
 						}
 					]
